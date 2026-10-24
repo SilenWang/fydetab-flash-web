@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>RK3588 WebUSB 只读探针（M0）</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <div>
+        <h1>RK3588 WebUSB 探针</h1>
+        <p class="subtitle">Fydetab Duo / Rockchip rockusb · M0 只读阶段</p>
+      </div>
+      <span class="badge ok big">只读</span>
+    </header>
+
+    <!-- Prominent safety statement: this is the page's contract with the user. -->
+    <section class="readonly-banner" aria-label="只读声明">
+      <strong>只读，不会写入设备。</strong>
+      <span>
+        本页只发送 5 条读取命令（<code>RKU_ReadChipInfo</code>、<code>RKU_ReadFlashInfo</code>、<code>RKU_ReadCapability</code>、
+        <code>RKU_ReadStorageList</code>、<code>RKU_TestDeviceReady</code>）。没有写入、擦除、切换存储或复位路径；
+        设备返回错误时只记录错误码，不做任何绕过。
+      </span>
+    </section>
+
+    <div id="support-warning" class="banner warn" hidden></div>
+
+    <section class="controls">
+      <button id="btn-request" type="button" class="primary">授权设备</button>
+      <button id="btn-refresh" type="button">列出已授权设备</button>
+      <button id="btn-read" type="button" class="primary">读取设备信息</button>
+      <button id="btn-export" type="button">导出 JSON</button>
+      <button id="btn-clear" type="button">清空记录</button>
+    </section>
+
+    <p id="status" class="status" data-tone="info">就绪。</p>
+
+    <section class="panel">
+      <h2>已授权设备</h2>
+      <p class="hint">
+        首次使用点击“授权设备”，在 Chrome 的设备弹窗里选择 <code>0x2207</code> 开头的设备。授权在页面刷新后仍然保留，
+        但设备重新枚举（maskrom → loader、复位等）后需要重新授权。
+      </p>
+      <div id="device-list" class="device-list"></div>
+    </section>
+
+    <section class="panel">
+      <h2>设备描述符</h2>
+      <div id="descriptor"></div>
+    </section>
+
+    <section class="panel">
+      <h2>只读命令结果</h2>
+      <div id="results" class="results"></div>
+    </section>
+
+    <section class="panel">
+      <h2>传输记录</h2>
+      <p id="trace-count" class="hint"></p>
+      <div class="table-wrap">
+        <table class="grid trace">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>类型/端点</th>
+              <th>命令</th>
+              <th>阶段</th>
+              <th>长度</th>
+              <th>耗时 ms</th>
+              <th>数据摘要</th>
+              <th>备注</th>
+            </tr>
+          </thead>
+          <tbody id="trace-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>错误</h2>
+      <div id="error-list"></div>
+    </section>
+
+    <footer class="page-footer">
+      <p>
+        协议常量与命令码来自 Rockchip 的 GPL-2.0
+        <a href="https://github.com/rockchip-linux/rkdeveloptool" rel="noreferrer">rkdeveloptool</a>
+        （<code>RKComm.h</code> / <code>RKComm.cpp</code> / <code>RKDevice.h</code>），说明见
+        <code>docs/protocol-notes.md</code>。本项目以 GPL-2.0 发布，不包含 <code>upgrade_tool</code> 二进制或 Rockchip loader blob。
+      </p>
+    </footer>
+
+    <script type="module" src="./probe.js"></script>
+  </body>
+</html>

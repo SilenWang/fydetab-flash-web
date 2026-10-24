@@ -1,0 +1,23 @@
+# pixi
+.pixi/
+.pixi.lock.bak
+
+# Go
+/dist/
+*.test
+*.out
+coverage.txt
+
+# Node (there are no npm dependencies; this is just for stray local tooling)
+node_modules/
+
+# Probe exports downloaded from the page
+rk3588-probe-*.json
+*.trace.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

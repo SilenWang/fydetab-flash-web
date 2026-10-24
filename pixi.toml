@@ -1,0 +1,20 @@
+[workspace]
+authors = ["Sylens Wong <silenseek14@gmail.com>"]
+channels = ["conda-forge"]
+name = "rk3588-webflasher"
+platforms = ["linux-64", "osx-64", "osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+# Regenerate web/probe/protocol.js from internal/rockusb (single source of truth).
+gen = "go run ./cmd/genprotocol"
+# Serve the static probe page on http://localhost:5173 (WebUSB secure context).
+dev = { cmd = "node tools/serve.mjs web/probe 5173", depends-on = ["gen"] }
+# Everything CI needs: generated JS is current, Go compiles+vet, JS parses.
+build = { cmd = "go run ./cmd/genprotocol -check && go build ./... && go vet ./... && node --check web/probe/protocol.js && node --check web/probe/rockusb.js && node --check web/probe/probe.js && node --check tools/serve.mjs", depends-on = ["gen"] }
+test = "go test ./... && node --test web/probe/rockusb.test.mjs web/probe/probe.test.mjs"
+fmt = "go fmt ./..."
+
+[dependencies]
+go = ">=1.22"
+nodejs = ">=20"
