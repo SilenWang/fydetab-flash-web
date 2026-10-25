@@ -297,6 +297,48 @@ func TestVerifyRKAFCRCTampered(t *testing.T) {
 	}
 }
 
+// Official Rockchip images (openFyde r132, FyeOS v23.0-SP1) carry a zero RKAF
+// CRC trailer. That means "not filled in", so verification must not refuse to
+// write such an image; the MD5 and PARM CRC checks still run.
+func TestVerifyRKAFCRCUnset(t *testing.T) {
+	path, _, _, _, _ := fixtureImage(t)
+	img, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	trailer := img.RKAFOffset + img.RKAFLength - 4
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := int64(0); i < 4; i++ {
+		data[trailer+i] = 0
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	img, err = Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	crc, err := img.VerifyRKAFCRC()
+	if err != nil {
+		t.Fatalf("VerifyRKAFCRC: %v", err)
+	}
+	if !crc.Unset {
+		t.Fatal("zero trailer must be reported as unset")
+	}
+	if !crc.OK {
+		t.Fatal("an unset trailer must not fail verification")
+	}
+	if crc.Computed == 0 {
+		t.Fatal("computed CRC must still be reported")
+	}
+}
+
 func TestVerifyMD5SignedTail(t *testing.T) {
 	loader := bytes.Repeat([]byte{0x33}, 1024)
 	rkaf := buildRKAF(t, []fixturePart{item("parameter", []byte("PARM"))})

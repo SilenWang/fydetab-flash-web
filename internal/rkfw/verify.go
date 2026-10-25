@@ -18,6 +18,11 @@ type CRCResult struct {
 	Stored   uint32 `json:"stored"`
 	Computed uint32 `json:"computed"`
 	OK       bool   `json:"ok"`
+	// Unset marks a trailer of 0x00000000. Official Rockchip images ship that
+	// way (both openFyde r132 and FyeOS v23.0-SP1 do), so the field means
+	// "not filled in", not "the archive is corrupt": the bootloader never
+	// checks it and the official flasher happily writes such an image.
+	Unset bool `json:"unset,omitempty"`
 }
 
 // MD5Result is the outcome of verifying the RKFW trailing MD5. Present is false
@@ -60,6 +65,10 @@ func (img *Image) VerifyRKAFCRC() (CRCResult, error) {
 	}
 	res.Computed = h.Sum32()
 	res.OK = res.Stored == res.Computed
+	if res.Stored == 0 {
+		res.Unset = true
+		res.OK = true
+	}
 	return res, nil
 }
 
