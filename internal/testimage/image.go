@@ -13,10 +13,13 @@
 package testimage
 
 import (
+	"bufio"
 	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -155,4 +158,90 @@ func R132Offsets() map[string]int64 {
 		out[s.Name] = s.Offset
 	}
 	return out
+}
+
+// LoadSlices reads a slice directory produced by tools/extract-rk-slices.sh:
+// a manifest.txt describing the source image plus one file per captured range.
+//
+// This is how a freshly captured image (for example the official FydeOS
+// v23.0-SP1 one) joins the test run without moving the multi-GiB file onto the
+// developer machine: extract the slices on the machine that has the image, then
+// point RKFW_SLICES_DIR at the directory.
+func LoadSlices(dir string) (Image, error) {
+	f, err := os.Open(filepath.Join(dir, "manifest.txt"))
+	if err != nil {
+		return Image{}, fmt.Errorf("open manifest: %w", err)
+	}
+	defer f.Close()
+
+	img := Image{}
+	imagePath := ""
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			return Image{}, fmt.Errorf("manifest line %q is not key=value", line)
+		}
+		switch key {
+		case "image":
+			imagePath = val
+		case "size":
+			n, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return Image{}, fmt.Errorf("manifest size %q: %w", val, err)
+			}
+			img.Size = n
+		case "sha256":
+			img.SHA256 = val
+		case "slice":
+			fields := strings.Fields(val)
+			if len(fields) != 4 {
+				return Image{}, fmt.Errorf("manifest slice %q needs: name offset length file", val)
+			}
+			off, err := strconv.ParseInt(fields[1], 10, 64)
+			if err != nil {
+				return Image{}, fmt.Errorf("manifest slice %q offset: %w", val, err)
+			}
+			want, err := strconv.ParseInt(fields[2], 10, 64)
+			if err != nil {
+				return Image{}, fmt.Errorf("manifest slice %q length: %w", val, err)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, fields[3]))
+			if err != nil {
+				return Image{}, fmt.Errorf("read slice %q: %w", fields[0], err)
+			}
+			if int64(len(data)) != want {
+				return Image{}, fmt.Errorf("slice %q is %d bytes, manifest says %d", fields[0], len(data), want)
+			}
+			img.Slices = append(img.Slices, Slice{Name: fields[0], Offset: off, Data: data})
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return Image{}, fmt.Errorf("read manifest: %w", err)
+	}
+	if img.Size <= 0 {
+		return Image{}, fmt.Errorf("manifest has no positive image size")
+	}
+	if len(img.Slices) == 0 {
+		return Image{}, fmt.Errorf("manifest lists no slices")
+	}
+	img.Name = fixtureName(imagePath, dir)
+	return img, nil
+}
+
+// fixtureName derives a filesystem-safe fixture name from the manifest's image
+// path (falling back to the directory name); Write uses it for the .img file.
+func fixtureName(imagePath, dir string) string {
+	base := strings.TrimSuffix(filepath.Base(strings.TrimSpace(imagePath)), filepath.Ext(imagePath))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		base = filepath.Base(filepath.Clean(dir))
+	}
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return "image"
+	}
+	return base
 }

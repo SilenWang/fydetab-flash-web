@@ -182,6 +182,17 @@ M2 的解析器已经用真实镜像核对过一遍：测试机会上唯一的�
 r132 暴露并已修正的两个坑：RKAF item 的 `+0x68` 是 2 KiB 块计数（不是字节长度），
 以及归档后有 `2^32` 字节 padding 导致 32 位长度不能盲猜回绕。
 
+任何一张真实镜像都可以用同样的方式核对，不必把 8 GiB 搬到开发机：
+
+```bash
+# 在放镜像的机器上切片段（只读，不碰设备），再把 rk-slices/ 带过来
+pixi run slices /path/to/update.img rk-slices
+# 回放并打印这份镜像的全部测量值
+RKFW_SLICES_DIR=$PWD/rk-slices pixi run test
+```
+
+细节见 [`docs/rkfw-rkaf-format.md` §9](docs/rkfw-rkaf-format.md)。
+
 ## 已知限制（有意留到后续阶段）
 
 - **ReadFlashInfo 的短读**：rkdeveloptool 对这一条读 512 B 并接受 ≥11 B；本页按 CBW 里声明的 11 B 读取，以保持 CSW 不错位。若某台设备实际发更多字节，会落成 `ERR_CMD_NOTMATCH` 并记录，不会顺手多读——这正好是要在 M0b 里确认的事实。

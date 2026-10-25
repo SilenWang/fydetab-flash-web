@@ -23,6 +23,10 @@ fmt = "go fmt ./..."
 # M2: offline image plan, e.g. `pixi run uf --dry-run update.img`. Never opens
 # a USB device and never writes flash.
 uf = "go run ./cmd/uf"
+# Cut the small slices of a real RKFW image so a machine without the multi-GiB
+# file can replay it in the tests: `pixi run slices /path/to/update.img rk-slices`
+# then `RKFW_SLICES_DIR=... pixi run test` (see tools/extract-rk-slices.sh).
+slices = "bash tools/extract-rk-slices.sh"
 
 [dependencies]
 go = ">=1.22"

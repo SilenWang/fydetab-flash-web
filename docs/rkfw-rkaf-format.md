@@ -347,10 +347,49 @@ STATE 的 4 GiB 缺口被显式列出（这就是 issue 要求「不要静默」
 仍未确认（需要官方 v23.0-SP1 镜像 / 真机）：
 
 1. 官方 v23.0-SP1 的同一批数值（`head_len`、`chip`、item 表、分区表、payload 大小）。
+   镜像已可用，核对流程见第 9 节。
 2. `rkaf-crc-trailer` 在官方镜像里是否也是 `00 00 00 00`（决定 M3 的写入前校验策略）。
+   同上，第 9 节的输出里会直接打印这个值。
 3. 真机 GPT（`sgdisk -p` / 探针读 GPT）与 `uf --dry-run` 的逐项对照，含 loader 是否会
    圆整 LBA。
 4. `ul`/`gpt` 两个阶段的字节数是否与 `upgrade_tool uf` 的实际传输量一致（IDB 假设、LBA 64）。
 5. `parameter` 在真实 `uf` 里的写入位置（见第 7 节）。
 6. r132 那 `2^32` 字节尾部 padding 的成因（与 STATE 的 4 GiB 未覆盖区间数值相同，但镜像
    本身无法证明两者相关）。
+
+## 9. 用任何真实镜像核对（不需要把 8 GiB 搬到开发机）
+
+`tools/extract-rk-slices.sh` 只读地切出核对所需的 5 个片段，`internal/testimage`
+的 `LoadSlices` 再把它们按绝对偏移装回稀疏文件：
+
+```bash
+# 1) 在放镜像的那台机器上（.img 已解压；脚本检测到 .zip 会提示先解压）
+pixi run slices /path/to/FydeOS_FydeTab_Duo_v23.0-SP1-io.img rk-slices
+#    或：bash tools/extract-rk-slices.sh <update.img> <outdir>
+
+# 2) 把 rk-slices/ 整个目录带到开发机（或把 5 个 .bin + manifest.txt 挂到 issue）
+
+# 3) 在这里回放
+RKFW_SLICES_DIR=$PWD/rk-slices pixi run test        # 跑全套；TestSlicesFromEnv 会跳过之外的用例
+RKFW_SLICES_DIR=$PWD/rk-slices pixi run bash -c \
+  'go test ./internal/rkfw -run TestSlicesFromEnv -v'   # 只看这份镜像的测量值
+```
+
+脚本做的事与踩过的坑：
+
+- 在**第一个 NUL** 处截断 `name`/`path`（不是删 NUL），否则 `parameter` 读成
+  `parametere@…`，参数项永远找不到；
+- payload 长度取 `+0x6C`（`+0x68` 是 2 KiB 块计数，`parameter` 处只有 `1`）；
+- 尾部 MD5 按内容定位（先看归档结束处、再看 EOF-32），不靠「后面还有 ≥160 B」的算术；
+- 产出 `manifest.txt`（`size` / `sha256` / `image_offset` / `rkaf_length` / 各片段偏移），
+  `LoadSlices` 按它装配。
+
+`TestSlicesFromEnv`（`internal/rkfw/slices_test.go`）只断言格式保证（item 槽位求和等于
+归档体、payload 不越槽、PARM CRC 自洽、`gpt.Build` 不报重叠），其余全部 `t.Logf` 打印，
+包括 `head_len`、`chip`、item 表、12 个分区、`rkaf crc trailer`、MD5 位置与原文。
+它的目的是**先看数值、再固化成断言**：确认后照 `r132_test.go` 的样子写一份
+`<镜像名>_test.go`，在注释里标 `sha256`，不要直接把日志里的数字抄成期望值而不核对来源。
+
+已知的官方 v23.0-SP1 事实只有父任务给的这几条（**尚未在本仓库实测**）：10 个 item、
+12 个分区、payload ≈ 3.79 GiB、`STATE` 5 GiB 分区 / 1 GiB payload。补齐后应同时更新
+第 8 节的清单。
