@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-10-25",
+  "note": "官方镜像清单。size/sha256 来自仓库里已经核对过的真实镜像记录（internal/testimage）；url 为 null 表示这份清单没有收录稳定的直链——本仓库不分发厂商固件，也不猜第三方镜像站地址，页面会如实显示“清单未提供直链”并引导用户用“选择本地镜像”。要发布自己的镜像源时，把 url 填成可直接 GET 的文件地址（服务器需要返回 Access-Control-Allow-Origin，否则页面会退化成“在新标签页打开下载”）。demo 条目指向 pixi run sample 生成的演示包，只用来演示下载/校验流程。",
+  "images": [
+    {
+      "id": "fydeos-v23.0-sp1-fydetab-duo",
+      "label": "FydeOS for Fydetab Duo v23.0-SP1",
+      "device": "Fydetab Duo（RK3588）",
+      "version": "v23.0-SP1",
+      "file": "FydeOS_FydeTab_Duo_v23.0-SP1-com.img",
+      "size": 8360540746,
+      "sha256": "5a3f79918a987160e355f680ad1e2b828c93d7f97a6c97aab57b04a197fe7010",
+      "url": null,
+      "page": "https://fydeos.io/download",
+      "notes": "官方整机镜像（解压后为 .img）。sha256 与大小取自仓库里已核对过的镜像记录；直链请从厂商下载页获取后用“选择本地镜像”导入。"
+    },
+    {
+      "id": "openfyde-r132-fydetab-duo",
+      "label": "openFyde r132（Chromium 132）",
+      "device": "Fydetab Duo（RK3588）",
+      "version": "r132",
+      "file": null,
+      "size": 8348478026,
+      "sha256": null,
+      "url": null,
+      "page": "https://github.com/openFyde",
+      "notes": "大小取自 docs/rkfw-rkaf-format.md 的实测记录；该清单没有收录它的 sha256 与直链，页面会据此显示“清单未提供”，不会假装校验过。"
+    },
+    {
+      "id": "demo-package",
+      "label": "演示包（本地生成，非厂商固件）",
+      "device": "演示 / mock 设备",
+      "version": "demo",
+      "file": "demo-update.zip",
+      "size": null,
+      "sha256": null,
+      "url": "../samples/demo-update.zip",
+      "page": null,
+      "demo": true,
+      "notes": "pixi run sample 生成的合成 RKFW 镜像 + ZIP64 演示包，用来演示“下载 → 校验 → 刷写”的完整流程；它不含任何厂商字节。"
+    }
+  ]
+}

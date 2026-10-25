@@ -23,14 +23,16 @@
 
 ## 2. 离线：缓存了什么，为什么可以不联网
 
-`web/app/sw.js` 在安装时把运行页面所需的全部文件预缓存（`PRECACHE` 列表，19 项）：
+`web/app/sw.js` 在安装时把运行页面所需的全部文件预缓存（`PRECACHE` 列表，24 项）：
 
 ```
 ./                       ./index.html            ./styles.css
 ./app.js                 ./worker.js             ./bridge.js
 ./usb-host.js            ./mock-host.js          ./mock-loader.js
 ./preflight.js           ./protocol.js           ./zip.js
-./zip-source.js          ./manifest.webmanifest  ./icons/*.png (3)
+./zip-source.js          ./images.js             ./images.json
+./devices.js             ./logs.js               ./verify.js
+./manifest.webmanifest   ./icons/*.png (3)
 ./wasm/rk3588.wasm       ./wasm/wasm_exec.js
 ```
 
@@ -65,7 +67,7 @@
 官方固件包通常是 `RK3588_..._update.zip`，里面是一个 3.8 GiB 的 `update.img`（RKFW 容器）。M4 不再
 要求你先解压：
 
-1. “2 · 镜像与 loader” 里选 `.zip`（文件选择器已接受 `.zip`）。
+1. 第 1 块 **“镜像”** 里选 `.zip`（文件选择器与 `showOpenFilePicker` 都接受 `.zip`）。
 2. 页面从**文件尾部**找 EOCD（必要时读 ZIP64 EOCD 记录），解析中央目录，只读几十 KiB。
 3. 依次对候选条目解出**前 4 个字节**，第一个以 `RKFW` 开头的条目就是镜像（裸 `RKAF` 只在没有
    RKFW 时兜底）。厂商包里的 `README.txt`、`MiniLoaderAll.bin`、驱动压缩包都会被跳过，页面会列出
@@ -82,8 +84,9 @@
 - 只支持 `stored` 与 `deflate` 两种压缩方式（官方包就是 deflate）；`lzma`/`bzip2` 等条目会被跳过并
   在页面里说明，而不是猜着解。
 - ZIP64（> 4 GiB 条目/偏移）已支持，中央目录里的 32 位字段被 `0xFFFFFFFF` 占满时走 ZIP64 扩展。
-- **不解压整个包就不校验 zip 的 CRC**；镜像自身的 RKAF CRC / MD5 校验仍然可用（`uf --dry-run`
-  默认会算，页面里的 `verify` 目前关闭）。
+- **不解压整个包就不校验 zip 的 CRC**；镜像自身的 RKAF CRC / 整镜像 MD5 / PARM CRC 由第 2 块的校验负责
+  （页面默认做完整校验，策略与本机实测耗时见 [`docs/m4b-ui.md`](m4b-ui.md)）。ZIP 包的完整校验会多一次
+  按需解压的成本，取样测速已经包含它。
 
 ### 计划对照（怎么自己验一遍）
 
@@ -92,8 +95,9 @@
 pixi run sample          # → web/samples/demo-update.img / .zip
 pixi run dev             # → http://localhost:5173/app/
 
-# 2) 页面里先选 demo-update.img，记下“镜像/计划”面板的每一项（items、传输字节、未覆盖尾部）
-#    再选 demo-update.zip，对比同一块面板：两个计划必须逐字段相同，只有第一行“镜像:”显示包名。
+# 2) 页面里先选 demo-update.img，记下第 1 块“镜像”摘要与第 2 块校验结论里的每一项
+#    （items、传输字节、未覆盖尾部）；再选 demo-update.zip，对比同样的字段：
+#    两个计划必须逐字段相同，只有“文件:”一行显示包名。
 ```
 
 自动化的同一件事（用真正的 Go/WASM 核心比较两份计划，不靠肉眼）：
@@ -108,12 +112,12 @@ pixi run test            # web/app/test/uf-zip.test.mjs 里 "a zip package plans
 
 ## 4. 出错时怎么带着证据来
 
-页面右下“命令”面板里有 **导出日志（NDJSON）**：把 shell 输出、uf 进度、每一次 USB 传输、
-自检判定、zip 统计（读了多少、回退重解几次、峰值缓冲）写成一份 `.ndjson` 下载下来。
-它的形状与 CLI 的 `uf --log` 一致，可以直接贴到 issue 里。
+第 5 块 **“日志”** 里有 **导出 NDJSON** 与 **导出文本**：把镜像选择与下载、CORS 探测、校验逐项结果与耗时、
+设备插拔、命令、uf 进度、每一次 USB 传输、zip 统计（读了多少、回退重解几次、峰值缓冲）写成一份文件下载下来。
+NDJSON 的形状与 CLI 的 `uf --log` 一致，可以直接贴到 issue 里。
 
-同时保留了“传输记录”表格（最近 300 条）与“错误”面板；`chrome://device-log` 里的 USB 记录在
-驱动问题时更有用，见 `docs/webusb-drivers.md`。
+原始传输记录（最近 300 条）、只读信息与错误面板在页面底部 **“高级 / 诊断”** 折叠区；`chrome://device-log`
+里的 USB 记录在驱动问题时更有用，见 `docs/webusb-drivers.md`。
 
 ## 5. 已知限制
 
@@ -121,5 +125,5 @@ pixi run test            # web/app/test/uf-zip.test.mjs 里 "a zip package plans
 - 安装后仍是 `standalone` 窗口，**不支持** `file://` 打开本地 zip——文件选择器需要真实用户手势，
   这个没问题，但页面必须来自 https/localhost。
 - 3.8 GiB 镜像在低配机器上解压速度受 CPU 限制（单线程 `DecompressionStream`），界面不会因此卡住
-  （解压在 worker 里），但写入前的“生成计划”会有几秒到几十秒。
+  （解压在 worker 里），但选好镜像后的“校验 + 计划”会有几秒到几十秒；页面会先测速并给出预计时间。
 - 真机写入仍然按 `docs/uf-write-path.md` 与 stage 8 的验收走；本阶段没有替代真机验证。

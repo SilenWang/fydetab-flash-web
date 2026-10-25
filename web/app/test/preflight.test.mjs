@@ -19,6 +19,7 @@ import {
   CHECK_LOADER,
   CHECK_PLAN,
   CHECK_FIRST_COMMAND,
+  CHECK_IMAGE,
 } from '../preflight.js';
 
 const maskrom = {
@@ -58,6 +59,19 @@ function byId(result, id) {
   return result.items.find((item) => item.id === id);
 }
 
+// M4b added one gate: the image must have been verified before the write
+// button unlocks. Tests that are not about that rule get a full verdict
+// injected; the ones that are pass `verification: null` / a failed verdict.
+const verified = {
+  level: 'full-ok',
+  status: 'passed',
+  allowsWrite: true,
+  full: true,
+  summary: '完整校验 · 9/9 项通过',
+};
+
+const preflight = (input) => evaluatePreflight({ verification: verified, ...input });
+
 test('mode helpers follow the bcdUSB bit-0 convention', () => {
   assert.equal(isMaskrom(maskrom), true);
   assert.equal(isMaskrom(loaderDevice), false);
@@ -81,7 +95,7 @@ test('a bare maskrom may not send any CBW before db', () => {
 });
 
 test('the checklist passes only when every pre-flight fact holds', () => {
-  const result = evaluatePreflight({
+  const result = preflight({
     devices: [maskrom],
     current: 1,
     loader: goodLoader,
@@ -116,7 +130,7 @@ test('the Go device state (numeric mode + modeLabel) passes the same gates', () 
   };
   assert.equal(isLoader(realLoader), true);
   assert.equal(isMaskrom(realLoader), false);
-  const result = evaluatePreflight({
+  const result = preflight({
     devices: [realLoader],
     current: 1,
     loader: goodLoader,
@@ -137,7 +151,7 @@ test('the Go device state (numeric mode + modeLabel) passes the same gates', () 
 });
 
 test('a loader built for another chip blocks the write', () => {
-  const result = evaluatePreflight({
+  const result = preflight({
     devices: [maskrom],
     current: 1,
     loader: badLoader,
@@ -154,7 +168,7 @@ test('a loader built for another chip blocks the write', () => {
 });
 
 test('an uncovered tail is not silently erased', () => {
-  const unconfirmed = evaluatePreflight({
+  const unconfirmed = preflight({
     devices: [maskrom],
     current: 1,
     loader: goodLoader,
@@ -167,7 +181,7 @@ test('an uncovered tail is not silently erased', () => {
   assert.match(byId(unconfirmed, CHECK_PLAN).detail, /显式选择/);
 
   // The choice itself is free; the confirmation is what makes it explicit.
-  const confirmed = evaluatePreflight({
+  const confirmed = preflight({
     devices: [maskrom],
     current: 1,
     loader: goodLoader,
@@ -180,7 +194,7 @@ test('an uncovered tail is not silently erased', () => {
 });
 
 test('without a plan or a device the checklist stays pending, not failed', () => {
-  const result = evaluatePreflight({ devices: [], current: null });
+  const result = preflight({ devices: [], current: null });
   assert.equal(result.ready, false);
   assert.equal(result.canWrite, false);
   assert.equal(byId(result, CHECK_MASKROM).status, 'pending');
@@ -190,7 +204,7 @@ test('without a plan or a device the checklist stays pending, not failed', () =>
 });
 
 test('a plan with nothing to write fails the plan check', () => {
-  const result = evaluatePreflight({
+  const result = preflight({
     devices: [maskrom],
     current: 1,
     loader: goodLoader,
@@ -202,7 +216,7 @@ test('a plan with nothing to write fails the plan check', () => {
 });
 
 test('an already-bootstrapped LOADER device allows reads and writes', () => {
-  const result = evaluatePreflight({
+  const result = preflight({
     devices: [loaderDevice],
     current: 1,
     loader: goodLoader,
@@ -219,7 +233,7 @@ test('an already-bootstrapped LOADER device allows reads and writes', () => {
 });
 
 test('a run in progress keeps the write button disabled', () => {
-  const result = evaluatePreflight({
+  const result = preflight({
     devices: [loaderDevice],
     current: 1,
     loader: goodLoader,
@@ -257,7 +271,7 @@ test('numeric media modes from the real ld are understood', () => {
   assert.equal(isMaskrom(numericMaskrom), true);
   assert.equal(readOnlyGate({ device: numericLoader, dbDone: false }).enabled, true);
 
-  const result = evaluatePreflight({
+  const result = preflight({
     devices: [numericLoader],
     current: 2,
     loader: goodLoader,
@@ -271,4 +285,47 @@ test('numeric media modes from the real ld are understood', () => {
   assert.equal(result.ready, true);
   assert.equal(result.canWrite, true);
   assert.equal(result.canDb, false);
+});
+
+test('the write gate requires a verified image (M4b)', () => {
+  const base = {
+    devices: [maskrom],
+    current: 1,
+    loader: goodLoader,
+    facts,
+    eraseMode: 'none',
+    eraseConfirmed: true,
+  };
+
+  // No verification yet: pending, not failed, and the button stays off.
+  const missing = preflight({ ...base, verification: null });
+  assert.equal(byId(missing, CHECK_IMAGE).status, 'pending');
+  assert.match(byId(missing, CHECK_IMAGE).detail, /还没有校验/);
+  assert.equal(missing.canWrite, false);
+  assert.equal(missing.ready, false);
+
+  // A failed verification is a blocking item.
+  const failed = preflight({
+    ...base,
+    verification: { level: 'full-ok', status: 'failed', allowsWrite: false, full: true, summary: '整镜像 MD5 不匹配' },
+  });
+  assert.equal(byId(failed, CHECK_IMAGE).status, 'fail');
+  assert.ok(failed.blocking.includes(CHECK_IMAGE));
+  assert.match(byId(failed, CHECK_IMAGE).detail, /整镜像 MD5 不匹配/);
+  assert.equal(failed.canWrite, false);
+
+  // A quick verdict may write, but the item has to say the full scan did not run.
+  const quick = preflight({
+    ...base,
+    verification: { level: 'quick-ok', status: 'passed', allowsWrite: true, full: false, summary: '快速校验 · 7/9 项通过' },
+  });
+  assert.equal(byId(quick, CHECK_IMAGE).status, 'pass');
+  assert.match(byId(quick, CHECK_IMAGE).detail, /未做完整校验/);
+  assert.equal(quick.canWrite, true);
+
+  // A full verdict with warnings still writes and says it was full.
+  const full = preflight({ ...base, verification: { ...verified, status: 'warn', summary: '完整校验 · 1 项警告' } });
+  assert.equal(byId(full, CHECK_IMAGE).status, 'pass');
+  assert.match(byId(full, CHECK_IMAGE).detail, /完整校验通过/);
+  assert.equal(full.canWrite, true);
 });

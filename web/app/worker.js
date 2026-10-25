@@ -181,7 +181,7 @@ async function resolveImage(msg) {
   throw new Error('no image supplied (need file, zip or demo)');
 }
 
-async function runUf(msg, call, resultType = 'uf-result') {
+async function runUf(msg, call, resultType = 'uf-result', eventType = 'uf-event') {
   const source = await resolveImage(msg);
   const onEvent = (kind, payload) => {
     let parsed = payload;
@@ -190,7 +190,7 @@ async function runUf(msg, call, resultType = 'uf-result') {
     } catch {
       // keep the raw string
     }
-    post({ type: 'uf-event', id: msg.id, kind, payload: parsed });
+    post({ type: eventType, id: msg.id, kind, payload: parsed });
   };
   try {
     const text = await call(source, msg.opts ?? {}, onEvent);
@@ -292,6 +292,19 @@ self.onmessage = async (event) => {
         if (!globalThis.rk3588) throw new Error('core is not ready');
         const text = await globalThis.rk3588.ufCancel();
         post({ type: 'uf-cancel', id: msg.id, result: JSON.parse(text) });
+        return;
+      }
+      case 'verify': {
+        // Structure + PARM CRC, plus the two full-file checksums when the
+        // page asked for them. Progress arrives as verify-event so a running
+        // verification and a running write never share a channel.
+        if (!globalThis.rk3588) throw new Error('core is not ready');
+        await runUf(
+          msg,
+          (source, opts, onEvent) => globalThis.rk3588.ufVerify(source, opts, onEvent),
+          'verify-result',
+          'verify-event',
+        );
         return;
       }
       case 'image-loader': {

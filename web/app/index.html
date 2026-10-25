@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#0e1116" />
-    <title>RK3588 WebFlasher · M4（PWA + 离线 + 官方 zip 直读）</title>
+    <title>RK3588 WebFlasher</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icons/icon-192.png" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="./icons/icon-192.png" />
@@ -15,7 +15,7 @@
     <header class="page-header">
       <div class="title">
         <h1>RK3588 WebFlasher</h1>
-        <p class="subtitle">rockusb over WebUSB · Go/WASM 核心 · M4（可安装 PWA、离线、官方 zip 直读）</p>
+        <p class="subtitle">选镜像 → 校验 → 选设备 → 刷写。全程在本机浏览器里完成，不需要后端。</p>
       </div>
       <div class="badges">
         <span id="mode-badge" class="badge muted" data-mode="none">无设备</span>
@@ -24,188 +24,228 @@
       </div>
     </header>
 
-    <section class="banner safety" aria-label="写入范围声明">
-      <strong>本页会写 flash。</strong>
-      <span>
-        Download Boot 只用 EP0 vendor request 把 <strong>镜像自带</strong>的 loader 写进 maskrom RAM；随后的
-        <code>gpt</code> / <code>wl</code> / <code>rd</code> 由 <code>internal/uf</code> 的同一套状态机执行。写入前必须逐项通过下面的自检；
-        <strong>上电后的第一条命令必须是 <code>db</code></strong>，在它成功之前页面会禁用所有会发 CBW 的按钮。
-      </span>
-    </section>
-
     <div id="banner" class="banner warn" hidden></div>
 
-    <main class="layout">
-      <div class="column">
-        <section class="panel">
-          <h2>安装与离线（PWA）</h2>
-          <div class="controls">
-            <button id="btn-install" type="button" class="primary" hidden>安装为应用</button>
-            <button id="btn-reload-app" type="button" hidden>刷新页面（新版本）</button>
-          </div>
-          <p id="install-note" class="hint">
-            安装后从桌面/开始菜单打开，断网也能载入页面与 wasm（安装本身不授予设备权限）。
-          </p>
-          <p id="sw-note" class="hint">离线：检查 service worker…</p>
-          <p class="hint">
-            只有 Chromium 内核（桌面 Chrome / Edge、ChromeOS、Android Chrome）有 WebUSB；Safari 与 Firefox
-            既不能写入，也无法安装本页。驱动与 udev 规则见 <code>docs/webusb-drivers.md</code>。
-          </p>
-        </section>
+    <main class="flow">
+      <!-- 1 · 镜像 -->
+      <section class="panel block" id="block-image">
+        <h2><span class="step">1</span>镜像</h2>
+        <p class="hint">选一个官方镜像下载，或者直接用手上已有的 <code>.img</code> / <code>.zip</code>。选好后第 2 块会自动开始校验。</p>
 
-        <section class="panel">
-          <h2>1 · 设备</h2>
-          <div class="controls">
-            <button id="btn-authorize" type="button" class="primary">授权设备</button>
-            <button id="btn-refresh" type="button">刷新（ld）</button>
-            <label class="toggle">
-              <input id="chk-mock" type="checkbox" />
-              演示模式（mock 设备）
-            </label>
+        <div class="block-body">
+          <div class="field-block">
+            <h3>官方镜像</h3>
+            <div id="image-catalog" class="catalog"><p class="muted">正在读取镜像清单…</p></div>
+            <p id="catalog-note" class="hint"></p>
           </div>
-          <div id="reconnect" class="reconnect" hidden>
-            <h3>设备重连向导</h3>
-            <ol id="reconnect-steps"></ol>
+
+          <div class="field-block">
+            <h3>使用本地镜像</h3>
             <div class="controls">
-              <button id="btn-reconnect-auth" type="button" class="primary">重新授权</button>
-              <button id="btn-reconnect-dismiss" type="button">暂时忽略</button>
+              <button id="btn-pick-image" type="button" class="primary">选择本地镜像…</button>
+              <label class="file">
+                <input id="file-image" type="file" accept=".img,.bin,.zip,application/octet-stream,application/zip" />
+                <span id="image-label">选择 update.img 或官方 .zip…</span>
+              </label>
+              <button id="btn-demo-image" type="button" hidden>载入演示镜像</button>
+            </div>
+            <p id="fsa-note" class="hint"></p>
+          </div>
+        </div>
+
+        <pre id="image-summary" class="summary">尚未选择镜像。</pre>
+        <pre id="zip-summary" class="summary" hidden></pre>
+        <div id="download-progress" class="progress" hidden>
+          <div class="bar"><span id="download-bar"></span></div>
+          <p id="download-text" class="progress-text"></p>
+          <div class="controls">
+            <button id="btn-download-cancel" type="button">取消下载</button>
+            <a id="download-fallback" class="button-link" target="_blank" rel="noreferrer" hidden>在新标签页打开下载</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2 · 校验 -->
+      <section class="panel block" id="block-verify">
+        <h2><span class="step">2</span>校验</h2>
+        <p class="hint">
+          结构校验（容器 / item 表 / 分区 / 未覆盖区间）与 PARM CRC 是秒级的；整镜像 MD5 与 RKAF CRC 要扫全文件。
+          下面的预计时间来自本机实测速度，不是固定数字。
+        </p>
+        <div class="controls">
+          <label class="toggle">
+            <input id="chk-full-verify" type="checkbox" checked />
+            完整校验（整镜像 MD5 + RKAF CRC）
+          </label>
+          <button id="btn-verify" type="button" class="primary" disabled>开始校验</button>
+        </div>
+        <p id="verify-hint" class="hint"></p>
+        <div id="verify-progress" class="progress" hidden>
+          <div class="bar"><span id="verify-bar"></span></div>
+          <p id="verify-progress-text" class="progress-text"></p>
+        </div>
+        <ul id="verify-checks" class="checklist"></ul>
+        <p id="verify-summary" class="hint"></p>
+      </section>
+
+      <!-- 3 · 设备 -->
+      <section class="panel block" id="block-device">
+        <h2><span class="step">3</span>设备</h2>
+        <p class="hint">
+          页面会列出所有已授权的 <code>0x2207</code> 设备。模式按 <code>bcdUSB</code> bit0 判定（0 = Maskrom，1 = Loader）。
+          没有出现在列表里的设备，点“添加设备”在浏览器弹窗里选一次。
+        </p>
+        <div class="controls">
+          <button id="btn-authorize" type="button" class="primary">添加设备</button>
+          <button id="btn-refresh" type="button">刷新</button>
+          <label class="toggle">
+            <input id="chk-mock" type="checkbox" />
+            演示模式（mock 设备）
+          </label>
+        </div>
+        <p id="device-selected" class="hint"></p>
+        <div id="devices" class="devices"></div>
+
+        <div id="reconnect" class="reconnect" hidden>
+          <h3>设备重连向导</h3>
+          <ol id="reconnect-steps"></ol>
+          <div class="controls">
+            <button id="btn-reconnect-auth" type="button" class="primary">重新授权</button>
+            <button id="btn-reconnect-dismiss" type="button">暂时忽略</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4 · 刷写 -->
+      <section class="panel block" id="block-flash">
+        <h2><span class="step">4</span>刷写</h2>
+        <p class="hint">按钮禁用时，下面每条前置条件都会写明缺什么；没有“变灰但不说原因”的状态。</p>
+        <ul id="checklist" class="checklist"></ul>
+        <div class="controls">
+          <label class="field">
+            未覆盖的分区尾部
+            <select id="erase-mode">
+              <option value="none">保持原内容（none）</option>
+              <option value="fill">写 0xFF（fill）</option>
+              <option value="erase-lba">ERASE_LBA 擦除（erase-lba）</option>
+            </select>
+          </label>
+          <label class="toggle">
+            <input id="chk-erase-confirm" type="checkbox" />
+            我确认这个处置
+          </label>
+        </div>
+        <div class="controls">
+          <button id="btn-write" type="button" class="danger" disabled>开始刷写</button>
+          <button id="btn-cancel-write" type="button" disabled>取消</button>
+        </div>
+        <div id="write-progress" class="progress" hidden>
+          <div class="bar"><span id="write-bar"></span></div>
+          <p id="write-progress-text" class="progress-text"></p>
+        </div>
+        <div id="write-failure" class="banner error" hidden>
+          <strong id="write-failure-title">刷写失败</strong>
+          <p id="write-failure-detail"></p>
+          <ol id="write-failure-steps"></ol>
+        </div>
+      </section>
+
+      <!-- 5 · 日志 -->
+      <section class="panel block" id="block-log">
+        <h2><span class="step">5</span>日志</h2>
+        <div class="controls">
+          <span id="log-count" class="hint">0 条</span>
+          <button id="btn-export-log" type="button">导出 NDJSON</button>
+          <button id="btn-export-text" type="button">导出文本</button>
+          <button id="btn-clear-log" type="button">清空</button>
+          <button id="btn-toggle-log" type="button" aria-expanded="true">收起</button>
+        </div>
+        <div id="log-body">
+          <ol id="log-lines" class="log-lines" aria-live="polite"></ol>
+        </div>
+      </section>
+
+      <details id="advanced" class="panel advanced">
+        <summary>高级 / 诊断（命令、只读信息、传输记录、离线安装）</summary>
+        <p class="hint">
+          这一区是给排障用的：原始传输记录、只读命令、loader 覆盖与 PWA 状态。日常刷写不需要打开它。
+        </p>
+        <div class="two-col">
+          <div>
+            <h3>状态</h3>
+            <div id="state-panel" class="state"></div>
+            <h3>只读信息（LOADER 态）</h3>
+            <div id="info-panel" class="info"><p class="muted">尚未读取。maskrom 下请先 Download Boot。</p></div>
+            <p id="readonly-note" class="hint warn-text"></p>
+            <h3>错误</h3>
+            <div id="errors" class="errors"><p class="muted">没有错误。</p></div>
+          </div>
+          <div>
+            <h3>传输记录</h3>
+            <p id="trace-count" class="hint">0 条</p>
+            <div class="table-wrap">
+              <table class="grid">
+                <thead>
+                  <tr>
+                    <th>#</th><th>类型</th><th>命令 / stage</th><th>长度</th><th>ms</th><th>状态</th><th>数据</th>
+                  </tr>
+                </thead>
+                <tbody id="trace-body"></tbody>
+              </table>
             </div>
           </div>
-          <p class="hint">
-            首次使用点“授权设备”，在浏览器弹窗里选 <code>0x2207</code> 设备。设备重新枚举（maskrom → loader）后浏览器会撤销按实例的授权，
-            需要再次点授权；页面会在 <code>connect</code> 事件后自动重新 <code>ld</code>。
-          </p>
-          <div id="devices" class="devices"></div>
-        </section>
+        </div>
 
-        <section class="panel">
-          <h2>2 · 镜像与 loader</h2>
-          <div class="controls">
-            <label class="file">
-              <input id="file-image" type="file" accept=".img,.bin,.zip,application/octet-stream,application/zip" />
-              <span id="image-label">选择 update.img 或官方 .zip…</span>
-            </label>
-            <button id="btn-demo-image" type="button" hidden>载入演示镜像</button>
-            <button id="btn-plan" type="button" class="primary" disabled>生成写入计划</button>
-          </div>
-          <p class="hint">
-            官方 <code>.zip</code> 可以直接选：页面只在中央目录里定位首个 <code>RKFW</code> 条目，再用
-            <code>DecompressionStream('deflate-raw')</code> 按需解压（ZIP64 也支持），不落地 3.8 GiB —
-            解出来的字节与同一份 <code>.img</code> 完全相同，所以计划逐字段一致。
-          </p>
-          <pre id="image-summary" class="summary">尚未选择镜像。</pre>
-          <pre id="zip-summary" class="summary" hidden></pre>
-          <pre id="loader-summary" class="summary">尚未生成计划。</pre>
-          <div class="controls">
-            <label class="file">
-              <input id="file-loader" type="file" accept=".bin,application/octet-stream" />
-              <span id="file-label">改用本地 loader…（可选）</span>
-            </label>
-            <button id="btn-demo-loader" type="button" hidden>载入演示 loader</button>
-            <button id="btn-clear-loader" type="button">改回镜像自带</button>
-          </div>
-        </section>
+        <h3>命令（M1 shell）</h3>
+        <form id="command-form" class="command">
+          <span class="prompt">›</span>
+          <input id="command-input" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="ld | desc | cd <n> | sd <n> | db | info [chip|flash|cap|storage] | help" />
+          <button type="submit" class="primary">运行</button>
+        </form>
+        <div class="quick">
+          <button type="button" data-command="ld">ld</button>
+          <button type="button" data-command="desc">desc</button>
+          <button type="button" data-command="cd 1">cd 1</button>
+          <button type="button" data-command="sd 1">sd 1</button>
+          <button type="button" data-command="info" data-cbw="true">info</button>
+          <button id="btn-db" type="button" data-cbw="true">Download Boot（db）</button>
+          <button type="button" data-command="help">help</button>
+          <button id="btn-clear" type="button">清空输出</button>
+        </div>
+        <pre id="terminal" class="terminal" aria-live="polite"></pre>
+        <pre id="uf-log" class="terminal small">尚未开始写入。</pre>
 
-        <section class="panel">
-          <h2>3 · 真机前自检</h2>
-          <p class="hint">逐项自动判定。任意一项不通过，“开始写入”都保持禁用；把鼠标停在某项上可以看到原因。</p>
-          <ul id="checklist" class="checklist"></ul>
-          <p id="readonly-note" class="hint warn-text"></p>
-        </section>
+        <h3>loader 与计划</h3>
+        <div class="controls">
+          <label class="file">
+            <input id="file-loader" type="file" accept=".bin,application/octet-stream" />
+            <span id="file-label">改用本地 loader…（可选）</span>
+          </label>
+          <button id="btn-demo-loader" type="button" hidden>载入演示 loader</button>
+          <button id="btn-clear-loader" type="button">改回镜像自带</button>
+          <button id="btn-plan" type="button" disabled>重新生成计划</button>
+        </div>
+        <pre id="loader-summary" class="summary">尚未生成计划。</pre>
 
-        <section class="panel">
-          <h2>4 · 写入（uf）</h2>
-          <div class="controls">
-            <label class="field">
-              未覆盖的分区尾部
-              <select id="erase-mode">
-                <option value="none">保持原内容（none）</option>
-                <option value="fill">写 0xFF（fill）</option>
-                <option value="erase-lba">ERASE_LBA 擦除（erase-lba）</option>
-              </select>
-            </label>
-            <label class="toggle">
-              <input id="chk-erase-confirm" type="checkbox" />
-              我确认这个处置
-            </label>
-          </div>
-          <div class="controls">
-            <button id="btn-write" type="button" class="danger" disabled>开始写入</button>
-            <button id="btn-cancel-write" type="button" disabled>取消</button>
-          </div>
-          <pre id="uf-log" class="terminal small">尚未开始写入。</pre>
-        </section>
-
-        <section class="panel">
-          <h2>5 · 命令（M1 shell）</h2>
-          <form id="command-form" class="command">
-            <span class="prompt">›</span>
-            <input id="command-input" type="text" autocomplete="off" spellcheck="false"
-                   placeholder="ld | desc | cd <n> | sd <n> | db | info [chip|flash|cap|storage] | help" />
-            <button type="submit" class="primary">运行</button>
-          </form>
-          <div class="quick">
-            <button type="button" data-command="ld">ld</button>
-            <button type="button" data-command="desc">desc</button>
-            <button type="button" data-command="cd 1">cd 1</button>
-            <button type="button" data-command="sd 1">sd 1</button>
-            <button type="button" data-command="info" data-cbw="true">info</button>
-            <button id="btn-db" type="button" data-cbw="true">Download Boot（db）</button>
-            <button type="button" data-command="help">help</button>
-            <button id="btn-clear" type="button">清空输出</button>
-            <button id="btn-export-log" type="button">导出日志（NDJSON）</button>
-          </div>
-          <p class="hint">
-            <code>info</code> 与 <code>db</code> 会发 CBW/控制传输：设备在 maskrom 且 db 尚未成功时它们不可用——真机上正是这条把上电周期弄脏的。
-          </p>
-          <pre id="terminal" class="terminal" aria-live="polite"></pre>
-        </section>
-      </div>
-
-      <div class="column">
-        <section class="panel">
-          <h2>状态</h2>
-          <div id="state-panel" class="state"></div>
-        </section>
-
-        <section class="panel">
-          <h2>只读信息（LOADER 态）</h2>
-          <div id="info-panel" class="info"><p class="muted">尚未读取。maskrom 下请先 Download Boot。</p></div>
-        </section>
-
-        <section class="panel">
-          <h2>传输记录</h2>
-          <p id="trace-count" class="hint">0 条</p>
-          <div class="table-wrap">
-            <table class="grid">
-              <thead>
-                <tr>
-                  <th>#</th><th>类型</th><th>命令 / stage</th><th>长度</th><th>ms</th><th>状态</th><th>数据</th>
-                </tr>
-              </thead>
-              <tbody id="trace-body"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="panel">
-          <h2>错误</h2>
-          <div id="errors" class="errors"><p class="muted">没有错误。</p></div>
-        </section>
-      </div>
+        <h3>安装与离线（PWA）</h3>
+        <div class="controls">
+          <button id="btn-install" type="button" class="primary" hidden>安装为应用</button>
+          <button id="btn-reload-app" type="button" hidden>刷新页面（新版本）</button>
+        </div>
+        <p id="install-note" class="hint">
+          安装后从桌面/开始菜单打开，断网也能载入页面与 wasm（安装本身不授予设备权限）。
+        </p>
+        <p id="sw-note" class="hint">离线：检查 service worker…</p>
+      </details>
     </main>
 
     <footer class="page-footer">
       <p>
         协议来自 Rockchip 的 GPL-2.0
-        <a href="https://github.com/rockchip-linux/rkdeveloptool" rel="noreferrer">rkdeveloptool</a>
-        （<code>RKU_DeviceRequest</code>、<code>RKDevice::DownloadBoot</code>、<code>RKComm.cpp</code> 的写命令）；实现见
-        <code>internal/rockusb</code>、<code>internal/uf</code>、<code>internal/imageplan</code>、<code>cmd/wasm</code>。本仓库以 GPL-2.0 发布，
-        不包含 <code>upgrade_tool</code> 二进制，也不分发任何 Rockchip loader blob。
-      </p>
-      <p>
-        浏览器与驱动：<code>docs/webusb-drivers.md</code>（macOS arm64 / Linux udev / Windows WinUSB）。
-        离线安装与 zip 直读：<code>docs/pwa-offline.md</code>。
+        <a href="https://github.com/rockchip-linux/rkdeveloptool" rel="noreferrer">rkdeveloptool</a>；
+        本仓库以 GPL-2.0 发布，不包含 <code>upgrade_tool</code> 二进制，也不分发任何 loader blob。
+        驱动与 udev 规则见 <code>docs/webusb-drivers.md</code>，离线与 zip 直读见 <code>docs/pwa-offline.md</code>。
       </p>
     </footer>
 

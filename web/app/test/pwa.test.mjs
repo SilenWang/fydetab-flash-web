@@ -93,7 +93,7 @@ test('the service worker precaches everything the app imports', () => {
   // Every local module the page or the worker imports must be in the list,
   // otherwise the offline boot fails at the first import.
   const imports = new Set();
-  for (const file of ['app.js', 'worker.js', 'zip-source.js', 'bridge.js', 'preflight.js', 'usb-host.js']) {
+  for (const file of ['app.js', 'worker.js', 'zip-source.js', 'bridge.js', 'preflight.js', 'usb-host.js', 'images.js', 'devices.js', 'logs.js', 'verify.js']) {
     for (const match of read(file).matchAll(/from '\.\/([\w./-]+\.js)'/g)) imports.add(match[1]);
   }
   imports.add('worker.js');
