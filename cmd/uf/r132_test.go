@@ -67,9 +67,25 @@ func TestR132DryRunContainer(t *testing.T) {
 	if got, want := rep.Parameter.ContentBytes, 578; got != want {
 		t.Errorf("parameter content = %d bytes, want %d", got, want)
 	}
-	// The 4 GiB of trailing padding must be reported, not swallowed.
-	if !hasWarning(rep.Warnings, "after the RKAF archive") {
-		t.Errorf("warnings = %v, want one about the trailing padding", rep.Warnings)
+	// The 4 GiB the file carries after the declared archive end is a hole
+	// inside the packed archive (SIL-515), not padding. This reconstruction
+	// only has header/parameter slices, so no payload signature can settle
+	// where the hole starts — the plan must say that and refuse to write
+	// instead of reading every item at a guessed offset.
+	if rep.Data == nil {
+		t.Fatal("no payload audit in the report")
+	}
+	if got, want := rep.Data.Hole, int64(1)<<32; got != want {
+		t.Errorf("data hole = %d, want %d (4 GiB)", got, want)
+	}
+	if rep.Data.Decided {
+		t.Error("Data.Decided = true; the sparse fixture has no payload signatures")
+	}
+	if !rep.Data.Failed() {
+		t.Error("Data.Failed() = false; an unverified hole position must refuse the write")
+	}
+	if !hasWarning(rep.Warnings, "no payload signature settles where it starts") {
+		t.Errorf("warnings = %v, want one saying the hole position is undetermined", rep.Warnings)
 	}
 }
 

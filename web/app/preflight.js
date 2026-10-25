@@ -33,15 +33,46 @@ export function currentDevice(devices, current) {
   return devices.length === 1 ? devices[0] : null;
 }
 
+/**
+ * deviceMode normalises the mode a device reports.
+ *
+ * The real `ld` output carries a numeric media mode plus a label:
+ *   { mode: 2, modeLabel: 'Loader', ... }
+ * while the mock/tests use the string form. Ignoring the numeric form made
+ * every pre-flight check fail on hardware (SIL-515): the write button stayed
+ * grey because isLoader() never saw 'LOADER'.
+ */
+const MODE_NAMES = { 0: 'MASKROM', 1: 'MASKROM', 2: 'LOADER', 3: 'LOADER' };
+
+export function deviceMode(device) {
+  if (!device) return 'UNKNOWN';
+  const mode = device.mode;
+  if (typeof mode === 'number') {
+    if (MODE_NAMES[mode]) return MODE_NAMES[mode];
+    const label = String(device.modeLabel ?? '').toUpperCase();
+    if (label.includes('LOADER')) return 'LOADER';
+    if (label.includes('MASKROM')) return 'MASKROM';
+    return 'UNKNOWN';
+  }
+  if (typeof mode === 'string' && mode) {
+    const upper = mode.toUpperCase();
+    if (upper === 'LOADER' || upper === 'MASKROM' || upper === 'UNKNOWN') return upper;
+  }
+  const label = String(device.modeLabel ?? '').toUpperCase();
+  if (label.includes('LOADER')) return 'LOADER';
+  if (label.includes('MASKROM')) return 'MASKROM';
+  return 'UNKNOWN';
+}
+
 /** isMaskrom reports whether a listed device is a bare maskrom board. */
 export function isMaskrom(device) {
   if (!device) return false;
-  return device.mode === 'MASKROM' && ((device.bcdUSB ?? 0) & 1) === 0;
+  return deviceMode(device) === 'MASKROM' && ((device.bcdUSB ?? 0) & 1) === 0;
 }
 
 /** isLoader reports whether a listed device has a usbplug (LOADER mode). */
 export function isLoader(device) {
-  return Boolean(device) && device.mode === 'LOADER';
+  return deviceMode(device) === 'LOADER';
 }
 
 /**

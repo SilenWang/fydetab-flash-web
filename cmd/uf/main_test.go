@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/SilenWang/rk3588-webflasher/internal/rkcrc"
+	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
 )
 
 // CLI-level fixture: a bare RKAF image (no RKFW, no MD5) with three
@@ -39,10 +40,17 @@ func wrapParam(text string) []byte {
 // trailer. It returns the bytes so tests can tamper with them.
 func buildCLIImage(t *testing.T) []byte {
 	t.Helper()
+	// Payloads carry the magics a real image has at these names, so the
+	// dry-run's payload-signature gate passes for a valid fixture and fails
+	// only when a test deliberately corrupts the image.
+	uboot := bytes.Repeat([]byte{0x11}, 1024)
+	copy(uboot[0:4], []byte{0xD0, 0x0D, 0xFE, 0xED}) // FDT (FIT image)
+	boot := bytes.Repeat([]byte{0x22}, 2048)
+	copy(boot[0:8], "CHROMEOS") // ChromeOS kernel
 	parts := []cliPart{
 		{name: "parameter", data: wrapParam(cliParameter), lba: 0x40},
-		{name: "uboot", data: bytes.Repeat([]byte{0x11}, 1024), lba: 0x1040},
-		{name: "boot", data: bytes.Repeat([]byte{0x22}, 2048), lba: 0x3040},
+		{name: "uboot", data: uboot, lba: 0x1040},
+		{name: "boot", data: boot, lba: 0x3040},
 	}
 
 	le := binary.LittleEndian
@@ -239,3 +247,98 @@ func TestHumanHelpers(t *testing.T) {
 		t.Fatalf("groupDigits = %q", got)
 	}
 }
+
+// The plan has to print where each item's bytes really are and what it read
+// there. SIL-515's write reported "7/7 partitions ok" while the parser was
+// feeding the device zeros, so this table is the check that makes a wrong
+// offset visible before a write.
+func TestDryRunPrintsPayloadOffsetsAndMagics(t *testing.T) {
+	path := writeCLIImage(t, buildCLIImage(t))
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--dry-run", path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"payload offsets and signatures",
+		"dataOffset",
+		"CHROMEOS", // boot
+		"FDT",      // uboot
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry-run output does not mention %q:\n%s", want, out)
+		}
+	}
+
+	var json, jerr bytes.Buffer
+	if code := run([]string{"--dry-run", "--json", path}, &json, &jerr); code != 0 {
+		t.Fatalf("json exit = %d, stderr = %s", code, jerr.String())
+	}
+	var rep Report
+	if err := decodeJSON(json.Bytes(), &rep); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	if rep.Data == nil {
+		t.Fatal("JSON report has no data section")
+	}
+	byName := map[string]ItemPlan{}
+	for _, it := range rep.Items {
+		byName[it.Name] = it
+	}
+	boot, ok := byName["boot"]
+	if !ok {
+		t.Fatal("boot item missing from the plan")
+	}
+	if boot.Pos == 0 || boot.DataOffset == 0 {
+		t.Errorf("boot pos/dataOffset = %d/%d, want non-zero", boot.Pos, boot.DataOffset)
+	}
+	if boot.Magic != "CHROMEOS" || boot.ExpectedMagic != "CHROMEOS" || !boot.MagicOK {
+		t.Errorf("boot = %+v, want magic CHROMEOS ok", boot)
+	}
+	if got := byName["uboot"]; got.Magic != "FDT" || !got.MagicOK {
+		t.Errorf("uboot = %+v, want magic FDT ok", got)
+	}
+	if rep.Data.Hole != 0 || !rep.Data.Decided || rep.Data.Failed() {
+		t.Errorf("data check = %+v, want a clean contiguous image", rep.Data)
+	}
+}
+
+// A payload that does not carry its expected magic must stop the run before a
+// device is opened — this is the "dry-run has to see the wrong bytes" rule.
+func TestDryRunRefusesWhenPayloadMagicIsMissing(t *testing.T) {
+	data := buildCLIImage(t)
+	// Zero the boot payload (CHROMEOS) without touching the item table.
+	path := writeCLIImage(t, data)
+	img, err := rkfw.Open(path)
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	for _, it := range img.Items {
+		if it.Name != "boot" {
+			continue
+		}
+		off := img.ItemOffset(it)
+		for i := int64(0); i < 8; i++ {
+			data[off+i] = 0
+		}
+	}
+	// The CRC trailer now covers stale bytes; the dry run must still read the
+	// payload (the guard under test is the signature check, not the CRC).
+	path = writeCLIImage(t, data)
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--dry-run", "--no-verify", path}, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit = %d, want 1 (refused)\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "payload signature check failed") {
+		t.Errorf("stderr = %q, want the refusal message", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "MISMATCH") {
+		t.Errorf("stdout = %q, want the payload table to flag the mismatch", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "拒绝写入") {
+		t.Errorf("stdout = %q, want the refusal line", stdout.String())
+	}
+}
+
+func decodeJSON(b []byte, v any) error { return json.Unmarshal(b, v) }

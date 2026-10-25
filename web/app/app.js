@@ -120,6 +120,12 @@ function onWorkerMessage(event) {
       settle(msg);
       renderUfResult(msg.result);
       break;
+    case 'uf-plan-result':
+      // A plan reply must not be rendered through the write panel: sharing
+      // 'uf-result' made every successful plan show up as a fake "write
+      // failed" (SIL-515). Only settle the promise; planImage() renders it.
+      settle(msg);
+      break;
     case 'uf-event':
       renderUfEvent(msg);
       break;
@@ -728,7 +734,10 @@ function renderResult(result) {
     renderDevices(result.state);
   }
   if (result.info) {
-    state.lastInfo = result.info;
+    // Merge, don't replace: `ld`/`info` replies carry different fields, and
+    // replacing wholesale made the plan lose the flash size it had already
+    // learned (the page then planned against a derived 10.50 GiB disk).
+    state.lastInfo = { ...(state.lastInfo ?? {}), ...result.info };
     renderInfo(result.info);
   }
   if (result.loader) {

@@ -43,6 +43,11 @@ type BridgeConnector struct {
 
 // Open lists the authorized devices, picks one in the mode this step expects
 // and claims its interface.
+//
+// With MaskromFirst the first call prefers MASKROM, but falls back to LOADER:
+// SIL-515 started with the board already in Loader, and an Open that only looked
+// for Maskrom failed before the runner ever reached bootIfNeeded — which made
+// the "already in Loader, skip Download Boot" path unreachable.
 func (c *BridgeConnector) Open(ctx context.Context) (rockusb.Transport, rockusb.Link, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, rockusb.Link{}, err
@@ -52,8 +57,9 @@ func (c *BridgeConnector) Open(ctx context.Context) (rockusb.Transport, rockusb.
 	}
 
 	c.mu.Lock()
+	first := c.opens == 0
 	want := rockusb.ModeLoader
-	if c.MaskromFirst && c.opens == 0 {
+	if c.MaskromFirst && first {
 		want = rockusb.ModeMaskrom
 	}
 	c.mu.Unlock()
@@ -70,6 +76,12 @@ func (c *BridgeConnector) Open(ctx context.Context) (rockusb.Transport, rockusb.
 	c.record(listed, nil)
 
 	target, ok := c.pick(listed, want)
+	if !ok && c.MaskromFirst && first && want == rockusb.ModeMaskrom {
+		// The board may already be in LOADER (the normal starting point for a
+		// reflash). Prefer Maskrom when present, but do not refuse to open a
+		// Loader-only board.
+		target, ok = c.pick(listed, rockusb.ModeLoader)
+	}
 	if !ok {
 		err := fmt.Errorf("没有处于 %s 的 Rockchip 设备（已看到：%s）", want, describeModes(listed))
 		c.record(listed, err)

@@ -130,16 +130,22 @@ func TestR132Container(t *testing.T) {
 		t.Errorf("RKAFLength = %d, want %d (archive body + 4-byte trailer)", got, want)
 	}
 
-	// The file carries 2^32 bytes of padding after the archive plus the 32-byte
-	// MD5 at EOF. Both are real properties of this image (the source file is
-	// 8,348,478,026 bytes long), so the parser must mention the padding rather
-	// than treat it as archive content.
+	// The file carries 2^32 bytes after the declared archive end plus the
+	// 32-byte MD5 at EOF. SIL-515 proved on FyeOS v23 that those bytes are a
+	// hole *inside* the packed archive (the packer reserves STATE's 5 GiB
+	// slot), not trailing padding; the parser must derive the hole size from
+	// the file layout and say so. This sparse reconstruction has no payload
+	// bytes, so no signature can settle where the hole starts — the warning
+	// has to say exactly that.
 	trailing := img.Size - (img.RKAFOffset + img.RKAFLength)
 	if want := int64(1)<<32 + 32; trailing != want {
-		t.Errorf("trailing bytes after the archive = %d, want %d (2^32 padding + the MD5 tail)", trailing, want)
+		t.Errorf("trailing bytes after the archive = %d, want %d (2^32 hole + the MD5 tail)", trailing, want)
 	}
-	if !hasWarning(img.Warnings, "after the RKAF archive") {
-		t.Errorf("warnings = %v, want one about the trailing padding", img.Warnings)
+	if got, want := img.DataHole, int64(1)<<32; got != want {
+		t.Errorf("DataHole = %d, want %d (4 GiB)", got, want)
+	}
+	if !hasWarning(img.Warnings, "no payload signature settles where it starts") {
+		t.Errorf("warnings = %v, want one saying the hole position is undetermined", img.Warnings)
 	}
 }
 

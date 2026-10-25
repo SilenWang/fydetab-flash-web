@@ -164,27 +164,38 @@ rkfw: item "package-file" padded size 0x1 is smaller than its payload size 0x19e
 - 结构校验也随之改：payload 必须落在自己的槽位内（越过下一项即报错），不再比较
   `+0x68` 与 payload 大小。
 
-### 3.3 32 位长度与「回绕 vs 尾部 padding」
+### 3.3 32 位长度、4 GiB 洞与「尾部 padding」
 
-`length` 只有 32 位，归档 ≥ 4 GiB 时会回绕。旧实现无条件地把字段值**外推**到文件里放得下
-的最大同余值，对 r132 会得出：
+**这是 SIL-515 真机失败后改掉的结论。** 之前把归档后的 2^32 字节当成 padding；
+实测（Fydetab Duo 读回）证明它是**打包器插在归档内部的洞**：
+
+- STATE 分区 5 GiB、payload 1 GiB，打包器在文件里为 STATE 预留了整段 5 GiB 槽位，
+  但 item 表的 32 位 `pos` 只描述「不含洞」的紧凑布局；
+- 于是 STATE 之后的所有 item 在文件里的真实偏移 = `pos + hole`，照 `pos` 读会读到 0；
+  真机证据：KERN-A 的 `pos=0x40077000` 处是 0，`+4 GiB` 处才是 `CHROMEOS`。
+
+`internal/rkfw` 因此按结构推导洞，而不是加常量：
 
 ```
-stored 4,053,098,496  →  推断 8,348,065,792（多算 4 GiB）
+declared_end = rkaf_offset + rkaf.length + 4        (32 位字段说的归档末尾)
+packed_end   = file size - 32                       (尾随 MD5 存在时)
+hole         = packed_end - declared_end
 ```
 
-而真实归档只有 `4,053,098,496` 字节（容器 `image_length - 4` 与之逐位相符），后面
-`2^32` 字节是 padding。因此判据改为：
+两张真实镜像都得到 `hole = 4 GiB`（r132 与 v23 各自的 `packed_end - declared_end`）。
+洞的**起点**再用 payload 签名判别：对每个 item 分别采样 `pos` 与 `pos+hole`，
+预期魔数（`KERN-*`→CHROMEOS、`uboot`→FDT、`EFI-SYSTEM`→FAT、`resource`→RSCE）
+出现在哪一侧就采用哪一侧；一旦有 item 落在 `pos+hole`，其后的 item 也一起位移。
 
-1. RKFW 的 `image_length` 与 RKAF 的 `length` 一致（两个独立 32 位字段互证）→ **采用存储
-   值**，不猜回绕；尾部多余字节记为 padding 并给 warning；
-2. 两者不一致（或裸 RKAF）→ 才按「与字段同余、且不超过文件可用字节数的最大值」恢复，
-   并给「>4 GiB wrap」warning。
+- 判据能落地时 → `Image.DataHoleStart` = 第一个位移 item 的 `pos`，plan 里逐项打印
+  `pos` / `dataOffset` / 实际读到的魔数；
+- 采样不到任何签名（只有头部片段的测试镜像）→ 洞大小照报，但位置标为**未验证**，
+  所有 item 仍按表内 `pos` 读，且 dry-run **拒绝写入**。这是有意的保守取舍：
+  猜错偏移正是 SIL-515「7/7 分区成功、写进去的全是 0」的原因。
 
-代价（明确写下）：如果某张镜像的**两个** 32 位长度字段同时回绕且彼此自洽，仅凭长度无法
-与 padding 区分，现在会退化成结构错误而不是静默外推。考虑到 RKAF 的 `pos` 本身就是 32 位
-（>4 GiB 的位置无法描述），这个取舍可以接受；合成 fixture 仍覆盖裸 RKAF 的真实回绕
-（`TestResolveArchiveLength`、`TestRecoverTrueLength`）。
+`length` 的回绕判据本身保留（容器 `image_length` 与 `rkaf.length` 互证时采用存储值）：
+v23 的两个字段都回绕到同一个值，与 r132 一样，靠长度已无法区分「回绕」与「padding」，
+洞是由文件布局 + 签名判定出来的。
 
 ## 4. parameter 分区与 PARM 包装（实测）
 
