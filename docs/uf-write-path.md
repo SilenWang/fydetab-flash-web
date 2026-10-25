@@ -84,41 +84,42 @@ connect ─┬─ MASKROM ──> Download Boot(ul) ──> 等待重新枚举�
   这是有意的：中途失败的 item 在 flash 上可能是半截内容，按 item 粒度重写比尝试续到扇区更安全。
 - `rd` 之后设备会重新枚举，浏览器授权同样可能失效；这是成功路径的已知行为，不是失败。
 
-## 5. IDB 字节模型（真机：先读后判，默认不覆盖）
+## 5. IDB 字节模型（先读后判，默认不覆盖）
 
-`gpt` 阶段 = **读取设备 LBA 64 → 识别类型 → 必要时重建**。真机（SIL-515）读回发现
-Fydetab Duo 的 LBA 64 是 `RKNS` 头（New IDB），而当时工具写的是未经真机验证的 `rk28-rc4`；
-BootROM 因此读不出 uboot，是最可能「压根起不来」的原因。所以现在的顺序是：
+`gpt` 阶段 = **读取设备 LBA 64 → 识别类型 → 必要时重建**。Fydetab Duo 的 LBA 64 是
+`RKNS` 头（New IDB）；旧工具用未验证的 `rk28-rc4` 覆盖它，BootROM 因此读不出 uboot。
+现在的顺序是：
 
 1. `READ_LBA` 读 LBA 64 的前 8 个扇区，识别 `RKNS` / `RK28` / 空 / 未知（`uf.IdentifyIDB`）；
 2. **设备已有有效 IDB（RKNS 或 RK28）→ 默认不写**，只改 GPT 与数据分区；
 3. 只有 `--rewrite-idb` 才重建，且按**识别出的类型**选模型（`uf.ModelForType`）：
-   `RK28` 可用 `rk28-rc4`；`RKNS` 目前没有经过验证的写入实现，**明确拒绝**而不是用旧模型覆盖；
+   `RK28` 用 `rk28-rc4`，`RKNS` 用 `rkboot-new-idb`；
 4. 覆盖前把原 IDB 字节写进日志（前 32 字节 hex，`--idb-backup <file>` 可落盘整段）；
 5. 空块按所选模型写入；未知字节且未显式 `--rewrite-idb` 时报错停止，不静默破坏。
 
-`rk28-rc4` 模型本身（来自 `rk_image_tool/src/common/idblock.c`、`rc4.c`）：
+`rkboot-new-idb`（New IDB）由 RKBOOT loader 的三段组成：
 
-1. loader 补齐到 512 字节的整数倍（零填充）；
-2. **每个 512 字节扇区独立**用固定 16 字节 key 做 RC4（每个扇区重新初始化 S 盒）；
-3. 结果写到 **LBA 64**（`RK_IDB_SECTOR`）。
+1. 从 RKFW loader（archive 里的 `bootloader`/`MiniLoaderAll.bin`）的
+   **ENTRYLOADER** 表（type 4）取 `FlashHead`、`FlashData`、`FlashBoot`；
+2. 每段按 2048 字节对齐后依次拼接（FlashHead 在 0，FlashData 在
+   `ceil(head/2048)*2048`，FlashBoot 紧随其后）；
+3. loader 头要求加密时，对拼接结果每 512 字节做一次相同的固定 key RC4；
+4. 写到 LBA 64。
 
-因此 gpt 阶段的字节数 = `align512(RKFW loader_length)`（与 M2 dry-run 一致）；被跳过时不
-计入传输总量。另一个可选模型 `raw-loader`（只补齐、不加密）用于真机 A/B。
+v23 loader 的三段是 2048 + 73728 + 178176 = **253,952 B**，生成的 IDB 以 `RKNS`
+开头；旧模型 `rk28-rc4`（整份 loader 按 512 字节 RC4，422,400 B）是错误布局，只保留
+用于复现旧日志。`raw-loader` 仍可用于 A/B。
 
-**尚未确认**：
-
-- `RKNS`（New IDB）的真实生成方式：镜像里的 loader 是 RKBOOT，BootROM 需要的
-  `FlashData`/`FlashBoot` 拼接或签名结构还没有官方说明，因此本版本不重建它；
-- 是否所有 RK3588 设备都用 RC4 路径（`Rc4DisableFlag` 的真实语义）；
-- LBA 64 是否对所有 RK3588 + eMMC 成立。
-
-日志里固定记录 `idb.existing`（`RKNS`/`RK28`/`empty`/`unknown`）、`idb.overwritten`、
-`idb.existingHeadHex`、`idb.backupPath` 与 `idb.model`/`idb.verified`。
+`Verified()` 仍为 false：New IDB 的字节布局已在真实镜像和设备现有 `RKNS` 头上核对过，
+但还没有一次“用新模型刷完并启动”的真机确认。日志固定记录 `idb.existing`
+（`RKNS`/`RK28`/`empty`/`unknown`）、`idb.overwritten`、`idb.existingHeadHex`、
+`idb.backupPath` 与 `idb.model`/`idb.verified`。
 
 ## 6. 写入前的擦除语义（未确认，因此显式）
 
-`STATE` 分区 5 GiB、镜像只带约 1 GiB payload，剩余 4 GiB 不在镜像描述范围内。`uf` 不静默决定：
+STATE 的 64 位 `size` 高字为 1，镜像带的是**完整的 5 GiB** payload（与 parameter 的
+`0xa0006d` 扇区逐字节相等），不是“1 GiB + 4 GiB 未覆盖”。真正未覆盖的只有 `resource`
+的 3.64 MiB 尾部。`uf` 仍然不静默决定：
 
 - `--erase-tail=none`（默认）：只写 payload，尾部保留原内容；
 - `--erase-tail=fill`：用 `WRITE_LBA` 把尾部写 0xFF（对应 `EraseEmmcByWriteLBA`）；

@@ -15,7 +15,45 @@ import (
 	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
 	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
 	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
+	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/rk3588-webflasher/internal/uf"
 )
+
+// ModelNameFallback is only used in the warning above.
+const ModelNameFallback = "RC4(loader)"
+
+// buildIDB returns the exact New IDB length for the image's loader. It uses the
+// same model the runner will, so the dry-run stage and the written bytes agree.
+func buildIDB(img *rkfw.Image) (int64, error) {
+	if img == nil || !img.HasRKFW || img.LoaderLength <= 0 {
+		return 0, nil
+	}
+	data, err := img.ReadRange(img.LoaderOffset, img.LoaderLength)
+	if err != nil {
+		return 0, err
+	}
+	parsed, err := rockusb.ParseLoaderImage(data)
+	if err != nil {
+		return 0, err
+	}
+	idb, err := uf.NewRKBOOTModel().Build(uf.LoaderInput{Container: data, Parsed: parsed})
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(idb)), nil
+}
+
+func imgLoaderRC4(img *rkfw.Image) bool {
+	if img == nil || !img.HasRKFW || img.LoaderLength <= 0 {
+		return false
+	}
+	data, err := img.ReadRange(img.LoaderOffset, img.LoaderLength)
+	if err != nil {
+		return false
+	}
+	parsed, err := rockusb.ParseLoaderImage(data)
+	return err == nil && parsed.RC4Flag != 0
+}
 
 // MaxParameterBytes bounds the parameter item a caller is willing to load.
 // Real parameter partitions are 64 KiB or less.
@@ -321,6 +359,10 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 			DataOffset: img.ItemOffset(it),
 			Shifted:    img.DataHole > 0 && int64(it.Pos) >= img.DataHoleStart,
 			Size:       int64(it.Size64),
+			// The vendor writes entry->size rounded to a sector; the archive
+			// slot may include alignment padding (and, for a full partition,
+			// 1.5 KiB past its end). Never write the slot: it can spill into
+			// the next partition.
 			PaddedSize: alignUp(int64(it.Size64), int64(rkfw.SectorSize)),
 		}
 		if it.HasData() {
@@ -533,12 +575,20 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 			HumanBytes(loader), img.LoaderOffset), loader)
 	}
 	idb := alignUp(loader, parameter.SectorSize)
+	idbDetail := fmt.Sprintf("RC4(loader) per 512 B sector, %s written at LBA %d", HumanBytes(idb), IDBSector)
+	if built, err := buildIDB(img); err == nil && built > 0 {
+		idb = built
+		idbDetail = fmt.Sprintf("New IDB (FlashHead+FlashData+FlashBoot, 2 KiB aligned%s), %s at LBA %d",
+			map[bool]string{true: ", RC4 per 512 B", false: ""}[imgLoaderRC4(img)], HumanBytes(idb), IDBSector)
+	} else if err != nil {
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf("could not build the New IDB from the image loader (%v); planning the legacy %s size", err, ModelNameFallback))
+	}
 	if idb > 0 {
-		detail := fmt.Sprintf("read LBA %d first and identify the device's IDB (RKNS/RK28/empty); write only when it is absent or --rewrite-idb is given (%s, RC4(loader) per 512 B sector)",
-			IDBSector, HumanBytes(idb))
+		detail := fmt.Sprintf("read LBA %d first and identify the device's IDB (RKNS/RK28/empty); write only when it is absent or --rewrite-idb is given (%s)",
+			IDBSector, idbDetail)
 		if opts.RewriteIDB {
-			detail = fmt.Sprintf("--rewrite-idb: read LBA %d, back the original IDB up, rebuild in the identified format (%s, RC4(loader) per 512 B sector)",
-				IDBSector, HumanBytes(idb))
+			detail = fmt.Sprintf("--rewrite-idb: read LBA %d, back the original IDB up, rebuild in the identified format (%s)",
+				IDBSector, idbDetail)
 		}
 		rep.appendStage("gpt", "Prepare/Download IDB", detail, idb)
 	}

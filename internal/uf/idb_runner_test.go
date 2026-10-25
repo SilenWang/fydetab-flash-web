@@ -114,9 +114,9 @@ func TestRunRewriteLegacyIDBUsesItsOwnModelAndBacksUp(t *testing.T) {
 	}
 }
 
-// Rebuilding a New IDB is not something this build can do correctly, so the
-// run must refuse instead of writing the legacy model over it.
-func TestRunRefusesToRebuildNewIDB(t *testing.T) {
+// A New IDB is rebuilt with the New IDB model, in the format the device uses,
+// never with the legacy whole-loader block.
+func TestRunRebuildsNewIDBWithNewModel(t *testing.T) {
 	layout := newTestLayout(t)
 	plan := layout.plan(t)
 	plan.IDB.Rewrite = true
@@ -129,14 +129,21 @@ func TestRunRefusesToRebuildNewIDB(t *testing.T) {
 	opts.RewriteIDB = true
 
 	rep, err := runPlan(t, plan, layout, conn, opts)
-	if err == nil {
-		t.Fatalf("run succeeded; rebuilding a New IDB must be refused (report %+v)", rep)
+	if err != nil {
+		t.Fatalf("run failed: %v (report %+v)", err, rep)
 	}
-	got, _ := conn.FlashAt(IDBDefaultLBA, len(existing))
-	if !bytes.Equal(got, existing) {
-		t.Fatal("the RKNS IDB was modified even though the run refused")
+	want, err := NewRKBOOTModel().Build(LoaderInput{Container: layout.loader})
+	if err != nil {
+		t.Fatalf("build idb: %v", err)
 	}
-	if rep.IDB == nil || rep.IDB.Overwritten {
+	got, err := conn.FlashAt(IDBDefaultLBA, len(want))
+	if err != nil {
+		t.Fatalf("read flash: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("flash does not hold the rebuilt New IDB")
+	}
+	if rep.IDB == nil || !rep.IDB.Overwritten || rep.IDB.Model != ModelRKBOOT {
 		t.Fatalf("IDB report = %+v", rep.IDB)
 	}
 }

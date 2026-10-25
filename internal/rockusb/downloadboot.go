@@ -47,6 +47,9 @@ const (
 	DBEntry471 uint32 = 1
 	// DBEntry472 is the code472 entry type (usbplug).
 	DBEntry472 uint32 = 2
+	// DBEntryLoader is the ENTRYLOADER type (FlashHead/FlashData/FlashBoot),
+	// the pieces a New IDB is assembled from.
+	DBEntryLoader uint32 = 4
 	// DBSettle is the sleep upstream does after the last segment.
 	DBSettle = time.Second
 )
@@ -107,6 +110,7 @@ type LoaderImage struct {
 	CRCCalculated uint32        `json:"crcCalculated"`
 	Entries471    []LoaderEntry `json:"entries471"`
 	Entries472    []LoaderEntry `json:"entries472"`
+	EntriesLoader []LoaderEntry `json:"entriesLoader"`
 	Size          int           `json:"size"`
 
 	data []byte
@@ -308,6 +312,10 @@ func ParseLoaderImage(data []byte) (*LoaderImage, error) {
 	if err != nil {
 		return nil, err
 	}
+	entriesLoader, err := parseEntryList(data, "loader", data[37], binary.LittleEndian.Uint32(data[38:42]), data[42], DBEntryLoader)
+	if err != nil {
+		return nil, err
+	}
 	if len(entries471) == 0 && len(entries472) == 0 {
 		return nil, loaderErrf(LoaderNoBootEntries, "loader lists no 0x0471 or 0x0472 segment")
 	}
@@ -321,6 +329,7 @@ func ParseLoaderImage(data []byte) (*LoaderImage, error) {
 
 	img.Entries471 = entries471
 	img.Entries472 = entries472
+	img.EntriesLoader = entriesLoader
 	img.data = data
 	return img, nil
 }

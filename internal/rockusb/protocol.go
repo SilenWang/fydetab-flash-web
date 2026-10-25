@@ -185,6 +185,16 @@ func IsReadOnly(op Op) bool {
 	return ok
 }
 
+// EncodeReadLBACBW renders the CBW for READ_LBA: dwAddress is the first
+// 512-byte sector and usLength is the sector count. Unlike the info commands,
+// this one carries both fields and a bulk-IN data stage of sectors*512 bytes.
+func EncodeReadLBACBW(tag uint32, lba uint32, sectors uint16) []byte {
+	b := EncodeCBW(tag, OpReadLBA, uint32(sectors)*512)
+	binary.LittleEndian.PutUint32(b[17:21], lba)
+	binary.LittleEndian.PutUint16(b[22:24], sectors)
+	return b
+}
+
 // EncodeCBW renders the 31-byte CBW for a read command. address and usLength
 // stay zero: none of the read-info commands use them (rkdeveloptool only sets
 // them for LBA/sector transfers).

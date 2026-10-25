@@ -35,14 +35,23 @@ func DemoLoader() []byte {
 	const header, entry = 102, 57
 	head := make([]byte, 2048)
 	plug := make([]byte, 8192)
+	fdata := make([]byte, 4096)
+	fboot := make([]byte, 8192)
 	for i := range head {
 		head[i] = byte(i * 3)
 	}
+	copy(head, "RKNS")
 	for i := range plug {
 		plug[i] = byte(i * 7)
 	}
-	dataOff := header + 2*entry
-	buf := make([]byte, dataOff+len(head)+len(plug))
+	for i := range fdata {
+		fdata[i] = byte(i * 5)
+	}
+	for i := range fboot {
+		fboot[i] = byte(i * 11)
+	}
+	dataOff := header + 5*entry
+	buf := make([]byte, dataOff+len(head)+len(plug)+len(fdata)+len(fboot))
 
 	binary.LittleEndian.PutUint32(buf[0:4], rockusb.LoaderTagBoot)
 	binary.LittleEndian.PutUint16(buf[4:6], header)
@@ -59,7 +68,11 @@ func DemoLoader() []byte {
 	buf[31] = 1
 	binary.LittleEndian.PutUint32(buf[32:36], header+entry)
 	buf[36] = entry
+	buf[37] = 3 // ENTRYLOADER
+	binary.LittleEndian.PutUint32(buf[38:42], header+2*entry)
+	buf[42] = entry
 	buf[43] = 'N'
+	buf[44] = 1 // ucRc4Flag: New IDB sectors are RC4'd
 
 	writeEntry := func(slot int, typ uint32, name string, off, size int) {
 		buf[slot] = entry
@@ -75,8 +88,14 @@ func DemoLoader() []byte {
 	}
 	writeEntry(header, rockusb.DBEntry471, "UsbHead", dataOff, len(head))
 	writeEntry(header+entry, rockusb.DBEntry472, "demo_usbplug", dataOff+len(head), len(plug))
+	loadOff := dataOff + len(head) + len(plug)
+	writeEntry(header+2*entry, rockusb.DBEntryLoader, "FlashHead", dataOff, len(head))
+	writeEntry(header+3*entry, rockusb.DBEntryLoader, "FlashData", loadOff, len(fdata))
+	writeEntry(header+4*entry, rockusb.DBEntryLoader, "FlashBoot", loadOff+len(fdata), len(fboot))
 	copy(buf[dataOff:], head)
 	copy(buf[dataOff+len(head):], plug)
+	copy(buf[loadOff:], fdata)
+	copy(buf[loadOff+len(fdata):], fboot)
 	binary.LittleEndian.PutUint32(buf[len(buf)-4:], rockusb.CRC32(buf[:len(buf)-4]))
 	return buf
 }

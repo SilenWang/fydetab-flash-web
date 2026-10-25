@@ -246,8 +246,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		NoReset:   *noReset,
 		StartItem: *resumeFrom,
 		IDB:       model,
-		RewriteIDB: *rewriteIDB,
-		IDBBackupPath: *idbBackup,
+		// This CLI only runs mock/replay; a real write must exercise the
+		// signature and read-back gates.
+		SkipSignatureCheck: true,
+		SkipReadback:       true,
+		RewriteIDB:         *rewriteIDB,
+		IDBBackupPath:      *idbBackup,
 		Event:     func(ev uf.Event) { writeEvent(stderr, ev) },
 	}
 	var (

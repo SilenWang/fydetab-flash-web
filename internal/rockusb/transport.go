@@ -356,6 +356,40 @@ type Result struct {
 }
 
 // Exec runs one read-info command, retrying only on timeout.
+// ReadLBAs reads sectors 512-byte sectors starting at lba. It is used for the
+// post-write read-back; it is a raw READ_LBA exchange, not one of the fixed
+// read-info commands in Commands.
+func (s *Session) ReadLBAs(lba uint32, sectors int) ([]byte, error) {
+	if sectors <= 0 || sectors > 0xFFFF {
+		return nil, fmt.Errorf("rkfw: READ_LBA sector count %d out of range", sectors)
+	}
+	cmd := Command{Op: OpReadLBA, Name: "RKU_ReadLBA", TransferLength: uint32(sectors) * 512, DataLength: sectors * 512}
+	tag := s.NextTag()
+	if err := s.bulkOut(cmd, "cbw", 1, EncodeReadLBACBW(tag, lba, uint16(sectors))); err != nil {
+		return nil, s.transferError(cmd, "cbw", 1, err)
+	}
+	data, err := s.bulkIn(cmd, "data", 1, sectors*512)
+	if err != nil {
+		return nil, s.transferError(cmd, "data", 1, err)
+	}
+	cswBytes, err := s.bulkIn(cmd, "csw", 1, CSWLength)
+	if err != nil {
+		return nil, s.transferError(cmd, "csw", 1, err)
+	}
+	csw, err := DecodeCSW(cswBytes)
+	if err != nil {
+		return nil, &Error{Code: ErrCmdNotMatch, Op: cmd.Op, OpName: cmd.Name, Stage: "csw", Attempt: 1, Err: err}
+	}
+	if code := csw.Validate(tag); code != ErrSuccess {
+		return nil, &Error{Code: code, Op: cmd.Op, OpName: cmd.Name, Stage: "csw", Attempt: 1,
+			Detail: fmt.Sprintf("CSW tag=0x%08X status=0x%02X (want tag=0x%08X)", csw.Tag, csw.Status, tag)}
+	}
+	if len(data) != sectors*512 {
+		return nil, fmt.Errorf("rkfw: READ_LBA returned %d bytes, want %d", len(data), sectors*512)
+	}
+	return data, nil
+}
+
 func (s *Session) Exec(cmd Command) Result {
 	res := Result{
 		OpName:      cmd.Name,

@@ -424,7 +424,9 @@ func ufRun(_ js.Value, args []js.Value) any {
 		}
 
 		runOpts := uf.Options{
-			Timeout:       opts.Timeout,
+			Timeout:            opts.Timeout,
+			SkipSignatureCheck: opts.Mock,
+			SkipReadback:       opts.Mock,
 			Retries:       opts.Retries,
 			ChunkSize:     opts.ChunkSize,
 			EraseTail:     mustEraseMode(opts.EraseTail),

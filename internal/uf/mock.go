@@ -787,17 +787,19 @@ func (s *Simulator) readData(op Op, lba uint32, length int) ([]byte, error) {
 		b := make([]byte, 4)
 		binary.LittleEndian.PutUint32(b, 1) // eMMC
 		return padTo(b, length), nil
-	case rockusb.OpTestUnitReady:
-		return nil, fmt.Errorf("sim: TEST_UNIT_READY has no data stage")
 	case rockusb.OpReadLBA:
 		off := int64(lba) * SectorSize
 		end := off + int64(length)
 		s.fl.mu.Lock()
 		defer s.fl.mu.Unlock()
 		if off < 0 || end > int64(len(s.fl.data)) {
-			return nil, fmt.Errorf("sim: READ_LBA 0x%x+%d is outside the %d-byte flash", lba, length, len(s.fl.data))
+			return nil, fmt.Errorf("sim: READ_LBA at LBA 0x%x of %d bytes is outside the %d-byte flash", lba, length, len(s.fl.data))
 		}
-		return append([]byte(nil), s.fl.data[off:end]...), nil
+		out := make([]byte, length)
+		copy(out, s.fl.data[off:end])
+		return out, nil
+	case rockusb.OpTestUnitReady:
+		return nil, fmt.Errorf("sim: TEST_UNIT_READY has no data stage")
 	}
 	return nil, fmt.Errorf("sim: opcode 0x%02X has no simulated data at lba 0x%x", uint8(op), lba)
 }

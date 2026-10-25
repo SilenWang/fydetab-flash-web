@@ -48,6 +48,12 @@ const (
 	// image (its supportChip disagrees with the image's chip). Upstream has no
 	// such error because download_boot() does not check at all.
 	ErrLoaderMismatch rockusb.ErrorCode = -15
+	// ErrSignature is a local code: an item or IDB did not match its
+	// expected magic before a write.
+	ErrSignature rockusb.ErrorCode = -16
+	// ErrReadback is a local code: the post-write read-back differs from the
+	// source, so the flash does not hold what the plan says.
+	ErrReadback rockusb.ErrorCode = -17
 )
 
 // CodeName renders an rkdeveloptool error code, including the local codes this
@@ -56,6 +62,10 @@ func CodeName(code rockusb.ErrorCode) string {
 	switch code {
 	case ErrCancelled:
 		return "ERR_CANCELLED"
+	case ErrSignature:
+		return "ERR_SIGNATURE"
+	case ErrReadback:
+		return "ERR_READBACK"
 	case ErrLoaderMismatch:
 		return "ERR_LOADER_MISMATCH"
 	}
@@ -136,6 +146,12 @@ type Options struct {
 	StartItem string
 	// SkipChipCheck disables matching the image chip against READ_CHIP_INFO.
 	SkipChipCheck bool
+	// SkipSignatureCheck disables the pre-write magic gate. Mock/replay runs
+	// set it; a real write must not.
+	SkipSignatureCheck bool
+	// SkipReadback disables the post-write first/last 4 KiB comparison.
+	// Mock/replay runs set it; a real write must not.
+	SkipReadback bool
 	// IDB overrides the IDB byte model. nil means NewRK28RC4Model().
 	IDB IDBModel
 	// RewriteIDB forces a rebuild of the IDB at LBA 64 even when the device
@@ -188,7 +204,7 @@ func (o Options) normalize() (Options, []string) {
 		o.EraseTail = EraseNone
 	}
 	if o.IDB == nil {
-		o.IDB = NewRK28RC4Model()
+		o.IDB = NewRKBOOTModel()
 	}
 	if o.ReenumTimeout <= 0 {
 		o.ReenumTimeout = DefaultReenumTimeout

@@ -33,7 +33,7 @@ func TestRunSuccessWritesIDBAndItemsThenResets(t *testing.T) {
 	}
 
 	// IDB: the default model's bytes at LBA 64.
-	wantIDB, err := NewRK28RC4Model().Build(LoaderInput{Container: layout.loader})
+	wantIDB, err := NewRKBOOTModel().Build(LoaderInput{Container: layout.loader})
 	if err != nil {
 		t.Fatalf("build idb: %v", err)
 	}
@@ -42,9 +42,9 @@ func TestRunSuccessWritesIDBAndItemsThenResets(t *testing.T) {
 		t.Fatalf("read IDB from flash: %v", err)
 	}
 	if !bytes.Equal(gotIDB, wantIDB) {
-		t.Fatalf("flash at IDB LBA does not hold the %s bytes", ModelRK28RC4)
+		t.Fatalf("flash at IDB LBA does not hold the %s bytes", ModelRKBOOT)
 	}
-	if rep.IDB == nil || rep.IDB.LBA != IDBDefaultLBA || rep.IDB.Model != ModelRK28RC4 || rep.IDB.Verified {
+	if rep.IDB == nil || rep.IDB.LBA != IDBDefaultLBA || rep.IDB.Model != ModelRKBOOT || rep.IDB.Verified {
 		t.Fatalf("IDB report = %+v", rep.IDB)
 	}
 
@@ -545,4 +545,24 @@ func maskromBootFrames(t *testing.T, loader []byte) []Frame {
 		}
 	}
 	return frames
+}
+
+func TestRunReadsBackIDBAndItems(t *testing.T) {
+	layout := newTestLayout(t)
+	plan := layout.plan(t)
+	conn := NewSimConnector(testSimConfig(plan))
+	opts := testOptions()
+	opts.SkipReadback = false // exercise READ_LBA against the simulator
+	opts.SkipSignatureCheck = true
+
+	rep, err := runPlan(t, plan, layout, conn, opts)
+	if err != nil {
+		t.Fatalf("run with read-back: %v", err)
+	}
+	if !rep.OK {
+		t.Fatalf("report not ok: %+v", rep)
+	}
+	if rep.IDB == nil || rep.IDB.Bytes == 0 {
+		t.Fatal("IDB was not written")
+	}
 }
