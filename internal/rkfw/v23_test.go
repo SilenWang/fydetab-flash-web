@@ -63,26 +63,19 @@ func TestV23Container(t *testing.T) {
 	if got, want := img.RKAFLengthField, uint32(4065150976); got != want {
 		t.Errorf("rkaf length field = %d, want %d", got, want)
 	}
-	if img.LengthWrapped {
-		t.Error("LengthWrapped = true; the two 32-bit fields agree, so no wrap was recovered")
+	if !img.LengthWrapped {
+		t.Error("LengthWrapped = false; the 64-bit high words extend the archive past the 32-bit length field")
 	}
 
-	if got, want := img.DataHole, int64(1)<<32; got != want {
-		t.Fatalf("DataHole = %d, want %d (4 GiB)", got, want)
+	// The high words are authoritative, so there is no inferred hole.
+	if got := img.DataHole; got != 0 {
+		t.Fatalf("DataHole = %d, want 0 (high-word offsets)", got)
 	}
-	if img.DataHoleDecided {
-		t.Error("DataHoleDecided = true; the sparse capture has no payload signatures")
+	if !img.DataHoleDecided {
+		t.Error("DataHoleDecided = false; the high words settle every offset")
 	}
-	if got, want := img.DataHoleStart, img.RKAFOffset+img.RKAFLength; got != want {
-		t.Errorf("DataHoleStart = %d, want the declared archive end %d", got, want)
-	}
-	if !hasWarning(img.Warnings, "no payload signature settles where it starts") {
-		t.Errorf("warnings = %v, want the undetermined-position warning", img.Warnings)
-	}
-	// Offsets stay at the table pos when the split is undecided — and the
-	// dry run refuses to write in that state (see cmd/uf's v23 test).
-	if got, want := img.DataOffset(img.Items[4]), img.RKAFOffset+int64(img.Items[4].Pos); got != want {
-		t.Errorf("KERN-A data offset = %d, want the unshifted %d", got, want)
+	if got, want := img.DataOffset(img.Items[4]), img.RKAFOffset+int64(img.Items[4].Pos64); got != want {
+		t.Errorf("KERN-A data offset = %d, want 0x%x", got, want)
 	}
 }
 
@@ -127,17 +120,19 @@ func TestV23ItemTable(t *testing.T) {
 			t.Errorf("item %q size = %d, want %d", want.name, got.Size, want.size)
 		}
 	}
-	// The last item's payload ends exactly at the declared archive length;
-	// the 4 GiB the file carries is neither described nor a padding tail.
+	// The last item's slot ends at the recovered archive body.
 	last := img.Items[len(img.Items)-1]
-	if got, want := last.End(), uint64(img.RKAFLengthField); got != want {
-		t.Errorf("last item end = %d, want the declared archive body %d", got, want)
+	if got, want := last.End(), uint64(img.RKAFLength-4); got != want {
+		t.Errorf("last item end = %d, want the archive body %d", got, want)
 	}
-	// STATE: 5 GiB partition, 1 GiB payload — the partition that caused the
-	// packer to reserve the extra 4 GiB.
+	// STATE: 5 GiB partition and a full 5 GiB payload; the size high word is
+	// what the low 32-bit field cannot express.
 	state := img.Items[3]
 	if got, want := state.Size, uint32(1073797632); got != want {
-		t.Errorf("STATE payload = %d, want %d (1 GiB)", got, want)
+		t.Errorf("STATE low size = %d, want %d", got, want)
+	}
+	if got, want := state.Size64, uint64(5368764928); got != want {
+		t.Errorf("STATE payload = %d, want %d (5 GiB)", got, want)
 	}
 	if got, want := state.NandSize, uint32(10485869); got != want {
 		t.Errorf("STATE nand_size = %d, want %d sectors (5 GiB)", got, want)

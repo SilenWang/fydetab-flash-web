@@ -54,34 +54,34 @@ func TestV23DryRunPlan(t *testing.T) {
 	if got, want := len(rep.Partitions), 12; got != want {
 		t.Fatalf("partitions = %d, want %d", got, want)
 	}
-	// STATE is the 5 GiB partition with a 1 GiB payload: the uncovered 4 GiB
-	// is what the packer reserved inside the archive.
+	// STATE carries its full 5 GiB payload (the size high word is 1).
 	state := rep.Partitions[0]
 	if state.Name != "STATE" {
 		t.Fatalf("first partition = %q, want STATE", state.Name)
 	}
-	if got, want := state.PayloadBytes, int64(1073797632); got != want {
-		t.Errorf("STATE payload = %d, want %d", got, want)
+	if got, want := state.PayloadBytes, int64(5368764928); got != want {
+		t.Errorf("STATE payload = %d, want %d (full 5 GiB)", got, want)
 	}
-	if got, want := state.UncoveredBytes, int64(4294965760); got != want {
+	if got, want := state.UncoveredBytes, int64(0); got != want {
 		t.Errorf("STATE uncovered = %d, want %d", got, want)
 	}
 
-	// The 4 GiB hole must be in the plan, not silently folded into padding.
+	// The high-word offsets are authoritative: no inferred hole. The sparse
+	// capture still has no payload bytes, so the signature gate must refuse.
 	if rep.Data == nil {
 		t.Fatal("no payload audit in the report")
 	}
-	if got, want := rep.Data.Hole, int64(1)<<32; got != want {
-		t.Errorf("data hole = %d, want %d", got, want)
+	if got := rep.Data.Hole; got != 0 {
+		t.Errorf("data hole = %d, want 0", got)
 	}
-	if rep.Data.Decided {
-		t.Error("Data.Decided = true; the capture cannot settle the hole position")
+	if !rep.Data.Decided {
+		t.Error("Data.Decided = false; high-word offsets settle every item")
 	}
 	if !rep.Data.Failed() {
-		t.Error("Data.Failed() = false; unverified offsets must refuse the write")
+		t.Error("Data.Failed() = false; the sparse capture has no payload signatures")
 	}
-	if !hasWarning(rep.Warnings, "no payload signature settles where it starts") {
-		t.Errorf("warnings = %v, want the unverified-offset warning", rep.Warnings)
+	if !hasWarning(rep.Warnings, "do not carry their expected payload magic") {
+		t.Errorf("warnings = %v, want the payload-magic warning", rep.Warnings)
 	}
 
 	// The item table drives the plan: 7 payload items map onto partitions,
@@ -110,15 +110,14 @@ func TestV23DryRunRefusesWithoutPayloadEvidence(t *testing.T) {
 	if !strings.Contains(stderr.String(), "payload signature check failed") {
 		t.Errorf("stderr = %q, want the refusal message", stderr.String())
 	}
-	// The payload table has to be in the output, with the hole named. No item
-	// is marked "(+hole)" here because this capture cannot settle the split —
-	// the table says so in the line below it instead.
-	for _, want := range []string{"payload offsets and signatures", "dataOffset", "hole 4.00 GiB"} {
+	// The payload table must show the high-word data offsets; the sparse
+	// capture still has no payload bytes, so the signatures are MISMATCH.
+	for _, want := range []string{"payload offsets and signatures", "dataOffset", "hole 0 B", "MISMATCH"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("stdout does not mention %q:\n%s", want, stdout.String())
 		}
 	}
-	if !strings.Contains(stdout.String(), "未经验证") {
-		t.Errorf("stdout = %q, want the unverified-offset line", stdout.String())
+	if !strings.Contains(stdout.String(), "拒绝写入") {
+		t.Errorf("stdout = %q, want the refusal line", stdout.String())
 	}
 }

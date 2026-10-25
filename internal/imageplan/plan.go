@@ -320,8 +320,8 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 			Pos:        int64(it.Pos),
 			DataOffset: img.ItemOffset(it),
 			Shifted:    img.DataHole > 0 && int64(it.Pos) >= img.DataHoleStart,
-			Size:       int64(it.Size),
-			PaddedSize: int64(it.PaddedSize),
+			Size:       int64(it.Size64),
+			PaddedSize: alignUp(int64(it.Size64), int64(rkfw.SectorSize)),
 		}
 		if it.HasData() {
 			sig := img.ItemSignature(it)
@@ -354,7 +354,7 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 			}
 			itemPlans[i] = ip
 			continue
-		case it.Size == 0:
+		case it.Size64 == 0:
 			ip.Action = ActionEmpty
 			ip.Detail = "zero-sized payload; nothing to write"
 			if nameIdx >= 0 {
@@ -471,8 +471,8 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 			switch itemPlans[i].Action {
 			case ActionWrite:
 				pp.PayloadItems = append(pp.PayloadItems, it.Name)
-				pp.PayloadBytes += int64(it.Size)
-				pp.CoveredBytes += int64(it.PaddedSize)
+				pp.PayloadBytes += int64(it.Size64)
+				pp.CoveredBytes += itemPlans[i].PaddedSize
 			case ActionReserved:
 				if pp.Note == "" {
 					pp.Note = "device-generated: the image carries no payload (RESERVED item)"

@@ -335,6 +335,9 @@ func humanGiB(n int64) string {
 // DataOffset returns the absolute file offset of an item's payload, taking the
 // archive hole into account.
 func (img *Image) DataOffset(it Item) int64 {
+	if img.HighWords {
+		return img.RKAFOffset + int64(it.Pos64)
+	}
 	off := img.RKAFOffset + int64(it.Pos)
 	if img.DataHole > 0 && int64(it.Pos) >= img.DataHoleStart {
 		off += img.DataHole

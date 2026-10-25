@@ -51,7 +51,7 @@ func TestSlicesFromEnv(t *testing.T) {
 	}
 	var slots uint64 = RKAFHeaderSize
 	for _, it := range img.Items {
-		if !it.Reserved() && it.Size > it.PaddedSize {
+		if !it.Reserved() && it.Size64 > it.PaddedSize {
 			t.Errorf("item %q payload %d exceeds its slot %d", it.Name, it.Size, it.PaddedSize)
 		}
 		slots += uint64(it.PaddedSize)
