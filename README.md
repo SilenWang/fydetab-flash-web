@@ -136,6 +136,64 @@ pixi run test
 - 大镜像、`File.slice()` 流式读取属于后续阶段；本阶段一次读入 loader（~140 KiB）。
 - 没有 `uf`、没有写 flash 的路径。
 
+## M0b 真机验收清单
+
+端到端同事在 maskrom 真机上执行：
+
+- [ ] Chrome/Edge 打开 `pixi run dev` 给出的 `http://localhost:5173/`，页面无 JS 报错。
+- [ ] 授权 `0x2207` 设备成功，界面显示 VID/PID 与 `mode = MASKROM`。
+- [ ] 点“读取设备信息”后，5 条命令的结果都出现在页面上；成功的记录 `dataHex`，失败的记录错误码。
+- [ ] 设备描述符里能看到配置 / 接口 / endpoint 的 number、direction、type、packetSize。
+- [ ] “导出 JSON”下载的文件包含 `device`、`commands`、`transfers`、`errors` 四段。
+- [ ] 通读 `transfers`：除 31 字节 CBW（`bulk-out`、`stage=cbw`）外，没有其他出站数据。
+- [ ] 把 JSON 附到 SIL-510，并注明 Chrome 版本、OS、平板型号。
+
+## M2：离线镜像计划（`uf --dry-run`）
+
+M2 增加了一条完全离线的路径：解析 RKFW/RKAF/parameter、校验 MD5 与 CRC，并打印
+`uf` 将会执行的阶段与分区写入计划。**它不打开 USB 设备，不写、不擦、不复位。**
+
+```bash
+# 计划（会流式校验整个镜像的 MD5 与 RKAF CRC）
+pixi run uf --dry-run /path/to/update.img
+
+# 只看布局、跳过全镜像校验；可指定真实 flash 大小
+pixi run uf --dry-run --no-verify --flash-sectors 250069680 update.img
+
+# 机器可读
+pixi run uf --dry-run --json update.img
+```
+
+输出包含：
+
+- `ul → gpt → wl <item> → rd` 阶段、每阶段字节数与累计进度；
+- 每个 RKAF item 的源偏移、大小、目标 LBA 与所属分区；
+- 按 parameter CMDLINE 推导的 12 个分区 GPT 计划（含只建 GPT、没有 payload 的分区）；
+- **未覆盖区间**：分区大于镜像 payload 时显式列出，例如 `STATE` 5 GiB / 1 GiB payload
+  会标出剩余 4 GiB 不会被写入，且旧内容是否擦除与镜像无关。
+
+格式细节、CRC 算法、32 位长度回绕与尚未核对的假设见
+[`docs/rkfw-rkaf-format.md`](docs/rkfw-rkaf-format.md)。
+
+## 已知限制（有意留到后续阶段）
+
+- **ReadFlashInfo 的短读**：rkdeveloptool 对这一条读 512 B 并接受 ≥11 B；本页按 CBW 里声明的 11 B 读取，以保持 CSW 不错位。若某台设备实际发更多字节，会落成 `ERR_CMD_NOTMATCH` 并记录，不会顺手多读——这正好是要在 M0b 里确认的事实。
+- **没有重连编排**：M1 起做设备选择与重新授权向导。
+- **没有 wasm**：M1 才把 Go 逻辑编成 `GOOS=js GOARCH=wasm` 放进 worker；M0 的 Go 包是它的种子。
+- **不支持切存储/复位**：`RKU_SwitchStorage`、`RKU_ResetDevice` 属于会改变设备状态的操作，不在只读范围内。
+
+## 目录结构
+
+```
+pixi.toml / pixi.lock       依赖与任务（唯一入口）
+internal/rockusb/           只读协议子集 + 单测
+cmd/genprotocol/            生成 web/probe/protocol.js
+web/probe/                  index.html / probe.js / rockusb.js / styles.css
+                            protocol.js 为生成物；*.test.mjs 为单测与伪设备冒烟测试
+tools/serve.mjs             本地静态服务
+docs/protocol-notes.md      协议笔记与待确认项
+```
+
 ## 协议来源与许可
 
 - 本仓库以 **GPL-2.0** 发布（见 `LICENSE`）。
