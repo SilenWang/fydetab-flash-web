@@ -204,6 +204,66 @@ func TestPlanVendorRequestRejectsOtherIndices(t *testing.T) {
 	}
 }
 
+func TestLoaderHeaderExposesVersionBuildTimeAndChip(t *testing.T) {
+	img, err := ParseLoaderImage(rk3588Loader(t))
+	if err != nil {
+		t.Fatalf("ParseLoaderImage: %v", err)
+	}
+	if got, want := img.VersionString(), "0.1.6"; got != want {
+		t.Errorf("VersionString() = %q, want %q", got, want)
+	}
+	if got, want := img.MergeVersionString(), "1.3.0"; got != want {
+		t.Errorf("MergeVersionString() = %q, want %q", got, want)
+	}
+	// The build time is the field that tells the two real loaders apart
+	// (v23's 2024-09-06 vs the SDK's 2022-06-28); the fixture pins the parse.
+	if got, want := img.BuildTime.String(), "2019-07-01 02:03:04 UTC"; got != want {
+		t.Errorf("BuildTime = %q, want %q", got, want)
+	}
+	if !img.BuildTime.Valid() {
+		t.Error("BuildTime should be valid")
+	}
+	if got, want := img.ChipName(), "RK3588"; got != want {
+		t.Errorf("ChipName() = %q, want %q", got, want)
+	}
+	var zero LoaderTime
+	if zero.Valid() || zero.String() != "unknown" {
+		t.Errorf("zero LoaderTime = valid:%v %q, want invalid/unknown", zero.Valid(), zero.String())
+	}
+	var feb LoaderTime = LoaderTime{Year: 2024, Month: 2, Day: 31}
+	if feb.Valid() {
+		t.Error("2024-02-31 is not a calendar date")
+	}
+}
+
+func TestCheckChipRejectsLoaderForAnotherChip(t *testing.T) {
+	img, err := ParseLoaderImage(rk3588Loader(t))
+	if err != nil {
+		t.Fatalf("ParseLoaderImage: %v", err)
+	}
+	for _, want := range []string{"RK3588", "rk3588s", "3588", ""} {
+		if err := img.CheckChip(want); err != nil {
+			t.Errorf("CheckChip(%q) = %v, want nil", want, err)
+		}
+	}
+	for _, want := range []string{"RK3566", "RK3399"} {
+		err := img.CheckChip(want)
+		if err == nil {
+			t.Fatalf("CheckChip(%q) must fail", want)
+		}
+		var lerr *LoaderError
+		if !errors.As(err, &lerr) || lerr.Kind != LoaderChipMismatch {
+			t.Fatalf("CheckChip(%q) = %v, want LOADER_CHIP_MISMATCH", want, err)
+		}
+		if !strings.Contains(err.Error(), "RK3588") {
+			t.Errorf("the message should name the loader's own chip: %v", err)
+		}
+	}
+	if img.SupportsChip("RK3588") != true || img.SupportsChip("RK3566") != false {
+		t.Error("SupportsChip disagrees with CheckChip")
+	}
+}
+
 func TestDownloadBootSendsSegmentsInOrder(t *testing.T) {
 	raw := rk3588Loader(t)
 	img, err := ParseLoaderImage(raw)
@@ -336,11 +396,17 @@ func TestDownloadBootClassifiesFirstPacketRejection(t *testing.T) {
 	if dbErr.Code != ErrRequestFail {
 		t.Errorf("code = %v, want %v", dbErr.Code, ErrRequestFail)
 	}
-	if !strings.Contains(dbErr.Detail, "entry0") {
-		t.Errorf("detail should name the rejected index: %q", dbErr.Detail)
+	// The corrected reading of the hardware log: index(0) is the first data
+	// block of the loader, not "the first USB request".
+	if dbErr.Index != 0 || !dbErr.FirstBlock || dbErr.Category() != "first-block" {
+		t.Errorf("index/block/category = %d/%v/%q, want 0/true/first-block",
+			dbErr.Index, dbErr.FirstBlock, dbErr.Category())
 	}
-	if !strings.Contains(dbErr.Hint(), "maskrom") {
-		t.Errorf("hint should point at maskrom state: %q", dbErr.Hint())
+	if !strings.Contains(dbErr.Detail, "index 0") {
+		t.Errorf("detail should name the rejected block as index 0: %q", dbErr.Detail)
+	}
+	if !strings.Contains(dbErr.Hint(), "loader") || !strings.Contains(dbErr.Hint(), "干净的上电周期") {
+		t.Errorf("hint should blame the loader and the power-on cycle, not the cable first: %q", dbErr.Hint())
 	}
 	if got := len(dev.controlOuts()); got != 1 {
 		t.Errorf("control transfers = %d, want to stop after the first rejected packet", got)
@@ -354,7 +420,9 @@ func TestDownloadBootClassifiesFailureAfterFirstPacket(t *testing.T) {
 	calls := 0
 	dev.controlFn = func(_, _, _, _ uint16, data []byte) (int, error) {
 		calls++
-		if calls == 3 {
+		// The first data block is one packet; anything after it is a later
+		// block, which is the "not index 0" case.
+		if calls == 15 {
 			return 0, errors.New("device disappeared mid-download")
 		}
 		return len(data), nil
@@ -368,6 +436,13 @@ func TestDownloadBootClassifiesFailureAfterFirstPacket(t *testing.T) {
 	}
 	if dbErr.Kind == DBBootromRejected {
 		t.Fatal("a mid-download failure must not be reported as a BootROM rejection")
+	}
+	if dbErr.Index == 0 || dbErr.FirstBlock || dbErr.Category() != "mid-transfer" {
+		t.Errorf("index/block/category = %d/%v/%q, want a non-zero block and mid-transfer",
+			dbErr.Index, dbErr.FirstBlock, dbErr.Category())
+	}
+	if !strings.Contains(dbErr.Hint(), "首块已经被接受") {
+		t.Errorf("hint should say the first block already worked: %q", dbErr.Hint())
 	}
 }
 

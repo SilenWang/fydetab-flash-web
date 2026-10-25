@@ -502,3 +502,127 @@ table.grid tr.error td {
   color: var(--muted);
   font-size: 0.76rem;
 }
+
+/* --- M3b: checklist, write panel --------------------------------------- */
+
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.field select {
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+button.danger {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+button.danger:not(:disabled):hover {
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+}
+
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
+.check-mark {
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+.check-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.check-label {
+  font-weight: 600;
+}
+
+.check-detail {
+  color: var(--muted);
+  font-size: 0.76rem;
+  word-break: break-word;
+}
+
+.check.pass {
+  border-left-color: var(--ok);
+}
+
+.check.pass .check-mark {
+  color: var(--ok);
+}
+
+.check.fail {
+  border-left-color: var(--error);
+}
+
+.check.fail .check-mark {
+  color: var(--error);
+}
+
+.check.warn {
+  border-left-color: var(--warn);
+}
+
+.check.warn .check-mark {
+  color: var(--warn);
+}
+
+.check.pending {
+  border-left-color: var(--border);
+  opacity: 0.85;
+}
+
+.check.pending .check-mark {
+  color: var(--muted);
+}
+
+.warn-text {
+  margin-top: 10px;
+  font-size: 0.78rem;
+}
+
+.warn-text[data-tone="warn"] {
+  color: var(--warn);
+}
+
+.warn-text[data-tone="ok"] {
+  color: var(--ok);
+}
+
+.terminal.small {
+  margin-top: 10px;
+  min-height: 120px;
+  max-height: 300px;
+}

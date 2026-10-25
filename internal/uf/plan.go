@@ -35,10 +35,28 @@ type Plan struct {
 	Warnings    []string `json:"warnings,omitempty"`
 }
 
-// LoaderPlan locates the RKFW loader inside the image.
+// LoaderPlan is the Download Boot blob and its provenance.
+//
+// The default is the loader inside the image (Source "image", located by
+// FileOffset/Length). A caller may pass a different file instead (Source
+// "file", bytes in Bytes); the runner marks that in the report so a write made
+// with a non-image loader is visible after the fact.
 type LoaderPlan struct {
-	FileOffset int64 `json:"fileOffset"`
-	Length     int64 `json:"length"`
+	Source     string `json:"source,omitempty"` // image | file
+	Name       string `json:"name,omitempty"`
+	FileOffset int64  `json:"fileOffset"`
+	Length     int64  `json:"length"`
+	SHA256     string `json:"sha256,omitempty"`
+	// Chip is the loader's own supportChip model ("RK3588"), read from the
+	// RKBOOT header. It is compared with Plan.Chip before Download Boot.
+	Chip      string `json:"chip,omitempty"`
+	Version   string `json:"version,omitempty"`
+	BuildTime string `json:"buildTime,omitempty"`
+	// Bytes holds the blob when it did not come from the image. It is never
+	// serialised: a log must stay small.
+	Bytes []byte `json:"-"`
+	// NonImage marks a loader the user supplied instead of the image's own.
+	NonImage bool `json:"nonImage,omitempty"`
 }
 
 // IDBPlan is the gpt stage: the IDB byte count the dry run projected and where

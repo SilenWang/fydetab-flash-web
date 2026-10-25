@@ -208,9 +208,20 @@ RK3588 官方 loader 的三段长度（2048 / 51200 / 88064）都对 4096 取余
 2. 每段结束按 `dataDelay` 休息；全部发完 `sleep(1)` 等设备重新枚举。
 3. 首包 = `UsbHead` 2048 B + 2 B CRC = **2050 B**，与 `upgrade_tool` 日志 `Total(2050),Sended(0)` 对得上。
 4. 真机上 `upgrade_tool DB` 在 `index(0)` 被 BootROM 拒绝（`Boot_VendorRequest471 failed,err=-1`，4 ms）。
-   本仓库据此把 `db` 失败分成三类（`DBError.Kind`）：
-   `DB_BOOTROM_REJECTED`（首包 USB 传输错误）/ `DB_TRANSFER_FAILED`（首包之后的失败或短写）/
-   `DB_LOADER_INVALID`、`DB_LOADER_CHIP_MISMATCH`（本地文件问题），另加 `DB_NOT_MASKROM`。
+   **`index(0)` 是 loader 文件里的第 0 个数据块**（0x0471 entry 0），不是第 0 条 USB 请求——也就是说数据
+   已经发到设备上了，是 BootROM 拒收；同一份 loader 换成本镜像自带的那份就成功，所以它不是 USB/浏览器故障。
+   本仓库据此把 `db` 失败分成两类上报（`DBError.Kind` → `Report.DB.Category`）：
+
+   | `DBError.Kind` | category | 含义 | 先查什么 |
+   |---|---|---|---|
+   | `DB_BOOTROM_REJECTED` | `first-block` | 第 0 个数据块（index 0）的首包被拒 | ① loader 是否镜像自带 ② 是否干净上电周期 ③ 线材 |
+   | `DB_TRANSFER_FAILED` | `mid-transfer` | 第 0 块已接受，之后（`Index >= 1` 或同块内后续包）中断 | 线材/供电、loader 截断 |
+   | `DB_LOADER_INVALID` | `loader-invalid` | 本地文件不是可用的 RKBOOT | 选的文件/镜像完整性 |
+   | `DB_LOADER_CHIP_MISMATCH` | `loader-chip-mismatch` | loader 的 `supportChip` 与镜像 chip 不一致 | 用镜像自带 loader |
+   | `DB_NOT_MASKROM` | `not-maskrom` | 设备不在裸 maskrom | 先回 maskrom |
+
+   `DBError` 还带 `Index`（loader 数据块序号）、`FirstBlock`、`BlockName`，日志里能直接对上
+   `upgrade_tool` 的 `index(N)`。
 
 ## 10. M1 的状态机与命令
 
@@ -243,3 +254,72 @@ STALL；拒绝信息直接指向 `db`。`db` 成功后 `awaitingReenumeration = 
 浏览器授权绑定在 USB device **实例**上：设备重新枚举后旧实例消失，`getDevices()` 不再返回它。M1 的做法是
 `connect` 事件触发自动 `ld`；如果列表为空/不含该设备，页面提示再点一次“授权设备”。这段在真机上的复验
 （按实例失效、按 VID/PID 策略是否仍有效）**待设备恢复后补做**，代码路径已按“会失效、需要重新授权”实现。
+
+## 11. 为什么必须用镜像自带的 loader（M3b 实测结论）
+
+### 11.1 结论
+
+真机上 `upgrade_tool DB` 两次都停在 `index(0)`。把这个 `index` 读对了，结论就变了：
+
+- `index(0)` 是 **loader 文件里的第 0 个数据块**（`0x0471` 的第 0 个 entry），不是第 0 条 USB 请求；
+- 也就是说 loader 的第 0 块**已经发到设备上**，是 BootROM 主动拒收；
+- 用户用官方 `upgrade_tool` + **同一根线**刷同一份 v23 镜像成功，所以硬件、线材、浏览器都可以排除；
+- 换成镜像自带的 loader 就能过。之前配的是 SDK 里的 `rk3588_spl_loader_v1.06.111.bin`，与 v23 镜像
+  **不是同一份构建**，属于真实错配。
+
+### 11.2 RKFW 头里的 loader
+
+`update.img` 的 RKFW 头（`0x00`..`0x66`）在第 25/29 字节给出 loader 的偏移与长度：
+
+| 偏移 | 字段 | 含义 |
+|---|---|---|
+| 25 | `loader_offset` (u32) | loader blob 在镜像文件里的绝对偏移 |
+| 29 | `loader_length` (u32) | loader blob 的字节数 |
+
+`internal/imageplan` 的 `FromImage()` 直接按这两个字段把 blob 切出来，算 sha256，并解析其 LDR/RKBOOT 头。
+页面与 `uf --dry-run` 显示的都是这份身份，而不是“用户选的文件”。
+
+两个实测样本（长度 + sha256 + LDR 构建日期就足以区分）：
+
+| 来源 | 长度 | sha256 | LDR 构建日期 |
+|---|---|---|---|
+| 官方 v23 镜像自带 | 422,336 B | `24c1d188…57c47` | 2024-09-06 |
+| SDK `rk3588_spl_loader_v1.06.111.bin` | 412,096 B | `4ca46b6f…e523ba` | 2022-06-28 |
+
+### 11.3 LDR / RKBOOT 头的身份字段
+
+`internal/rockusb` 解析的是 `RKBoot.h` 的 packed 头（102 B，见 §9.2）。与“哪份 loader”有关的三组字段：
+
+| 偏移 | 字段 | 本仓库的呈现 |
+|---|---|---|
+| 6 / 10 | `dwVersion` / `dwMergeVersion` | `LoaderImage.VersionString()` / `MergeVersionString()` |
+| 14..20 | `STRUCT_RKTIME`（年 u16 + 月日时分秒） | `LoaderTime`，zeroed 时报 `unknown`，不报 year 0 |
+| 21..24 | `emSupportChip`（RK3588 = `0x33353838`） | `LoaderImage.ChipName()` → `RK3588`，`SupportsChip()` 归一化成 `3588` 比较 |
+
+`LoaderImage.CheckChip(imageChip)` 把 loader 的 `supportChip` 与镜像头的 `ChipName()` 比对（两者都归一化成
+四位数字，`RK3588` / `rk3588s` / `3588` 等价）。不一致返回 `LOADER_CHIP_MISMATCH`。
+
+### 11.4 上游的缺口
+
+`CRKDevice::DownloadBoot`（rkdeveloptool `RKDevice.cpp:510`）把 loader 头里的 `SupportDevice` 直接赋给
+`dev.emDeviceType`，**没有任何 loader 与芯片/镜像的匹配校验**。所以：
+
+1. 错配的 loader 会被完整发送（几十个 EP0 包）；
+2. BootROM 在第 0 个数据块拒收，日志表现为 `index(0)` + `err=-1`；
+3. 表面现象与“线材不良 / 浏览器问题 / 设备不干净”完全一样。
+
+`internal/uf` 补上了这一步：`checkLoaderPlan()` 在**打开设备之前**解析 loader 并比对镜像 chip，不一致就返回
+`ERR_LOADER_MISMATCH`（category `loader-chip-mismatch`），一个字节都不发；`Report.Loader` 记录
+source / name / offset / length / sha256 / version / buildTime / chip / chipCheck，事后可以对照是不是发错了文件。
+
+### 11.5 页面的硬规则：上电后第一条命令必须是 db
+
+真机上就是“先读了一下设备信息”把上电周期弄脏的：裸 maskrom 会把任何 31 字节 CBW STALL（§9.1），而这一轮
+上电之后 BootROM 就不再接受 Download Boot。所以：
+
+- maskrom 下、`db` 成功之前，页面禁用所有会发 CBW 的按钮（`info` 等），并在自检清单里写明原因；
+- 写入流程的第一步就是 `db`；
+- 判断依据是 `bcdUSB bit0`（§6）以及本次上电后是否已经成功 `db`（设备重新枚举成 LOADER 即视为成功）。
+
+规则实现在 `web/app/preflight.js`（`readOnlyGate` / `evaluatePreflight`），单测在
+`web/app/test/preflight.test.mjs`；`internal/device` 的 shell 也会在 maskrom 下、打开设备前拒绝 `info`。

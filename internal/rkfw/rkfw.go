@@ -202,6 +202,12 @@ type Image struct {
 	Path string
 	Size int64
 
+	// rd is where payload bytes come from. Open fills it with a reader that
+	// reopens Path on every call (so no descriptor is held); OpenReaderAt
+	// stores the caller's reader, which is how the browser core reads an
+	// image the page owns.
+	rd io.ReaderAt
+
 	HasRKFW      bool
 	RKFW         Header
 	LoaderOffset int64
@@ -226,6 +232,19 @@ type Image struct {
 	Warnings []string
 }
 
+// fileReader reopens the path for every ReadAt, so an Image never holds a file
+// descriptor. That is the same lifetime the pre-OpenReaderAt code had.
+type fileReader struct{ path string }
+
+func (f fileReader) ReadAt(p []byte, off int64) (int, error) {
+	fh, err := os.Open(f.path)
+	if err != nil {
+		return 0, err
+	}
+	defer fh.Close()
+	return fh.ReadAt(p, off)
+}
+
 // Open parses path without reading payload bytes. Structural problems (bad
 // magic, truncated file, item data outside the archive, more than 16 items)
 // are errors; softer anomalies are collected in Image.Warnings.
@@ -243,24 +262,34 @@ func Open(path string) (*Image, error) {
 	if st.IsDir() {
 		return nil, fmt.Errorf("rkfw: %s is a directory", path)
 	}
-	size := st.Size()
+	return OpenReaderAt(fileReader{path: path}, st.Size(), path)
+}
+
+// OpenReaderAt parses an image the caller already owns. name is only used in
+// messages and in Image.Path. It is how the browser core reads an image the
+// page holds (a WebUSB page cannot hand the wasm core a filesystem path), and
+// it keeps ReadItem/ItemReader/Verify* working on the same source.
+func OpenReaderAt(r io.ReaderAt, size int64, name string) (*Image, error) {
+	if r == nil {
+		return nil, errors.New("rkfw: nil reader")
+	}
 	if size < int64(RKAFHeaderSize) {
-		return nil, fmt.Errorf("rkfw: %s is only %d bytes; an RKAF header alone needs %d", path, size, RKAFHeaderSize)
+		return nil, fmt.Errorf("rkfw: %s is only %d bytes; an RKAF header alone needs %d", name, size, RKAFHeaderSize)
 	}
 
 	var magic [4]byte
-	if err := readAtFull(f, magic[:], 0); err != nil {
+	if err := readAtFull(r, magic[:], 0); err != nil {
 		return nil, fmt.Errorf("rkfw: read magic: %w", err)
 	}
 
-	img := &Image{Path: path, Size: size}
+	img := &Image{Path: name, Size: size, rd: r}
 	rkafOffset := int64(0)
 
 	switch magic {
 	case MagicRKFW:
 		img.HasRKFW = true
 		head := make([]byte, HeaderSize)
-		if err := readAtFull(f, head, 0); err != nil {
+		if err := readAtFull(r, head, 0); err != nil {
 			return nil, fmt.Errorf("rkfw: read RKFW header: %w", err)
 		}
 		img.RKFW = parseHeader(head)
@@ -285,11 +314,11 @@ func Open(path string) (*Image, error) {
 		// Bare update.img: no RKFW wrapper, no loader, no MD5 tail.
 	default:
 		return nil, fmt.Errorf("rkfw: %s: unknown image magic %q (want %q or %q)",
-			path, string(magic[:]), string(MagicRKFW[:]), string(MagicRKAF[:]))
+			name, string(magic[:]), string(MagicRKFW[:]), string(MagicRKAF[:]))
 	}
 
 	raw := make([]byte, RKAFHeaderSize)
-	if err := readAtFull(f, raw, rkafOffset); err != nil {
+	if err := readAtFull(r, raw, rkafOffset); err != nil {
 		return nil, fmt.Errorf("rkfw: read RKAF header at 0x%x: %w", rkafOffset, err)
 	}
 	arch, items, err := parseArchive(raw)
@@ -573,17 +602,22 @@ func (img *Image) ItemOffset(it Item) int64 {
 	return img.RKAFOffset + int64(it.Pos)
 }
 
+// ReaderAt returns the byte source this image was parsed from. It is what uf's
+// Source needs, so the write path reads the same bytes the plan was built from.
+func (img *Image) ReaderAt() io.ReaderAt {
+	if img.rd != nil {
+		return img.rd
+	}
+	return fileReader{path: img.Path}
+}
+
 // ItemReader returns a streaming reader over an item's payload.
 func (img *Image) ItemReader(it Item) (*io.SectionReader, func() error, error) {
 	if !it.HasData() {
 		return nil, nil, fmt.Errorf("rkfw: item %q has no payload in the archive", it.Name)
 	}
-	f, err := os.Open(img.Path)
-	if err != nil {
-		return nil, nil, fmt.Errorf("rkfw: open %s: %w", img.Path, err)
-	}
-	r := io.NewSectionReader(f, img.ItemOffset(it), int64(it.Size))
-	return r, f.Close, nil
+	r := io.NewSectionReader(img.ReaderAt(), img.ItemOffset(it), int64(it.Size))
+	return r, func() error { return nil }, nil
 }
 
 // ReadItem reads an item payload into memory. maxBytes guards against
@@ -595,14 +629,22 @@ func (img *Image) ReadItem(it Item, maxBytes int64) ([]byte, error) {
 	if maxBytes > 0 && int64(it.Size) > maxBytes {
 		return nil, fmt.Errorf("rkfw: item %q is %d bytes, above the %d-byte limit", it.Name, it.Size, maxBytes)
 	}
-	f, err := os.Open(img.Path)
-	if err != nil {
-		return nil, fmt.Errorf("rkfw: open %s: %w", img.Path, err)
-	}
-	defer f.Close()
 	buf := make([]byte, it.Size)
-	if err := readAtFull(f, buf, img.ItemOffset(it)); err != nil {
+	if err := readAtFull(img.ReaderAt(), buf, img.ItemOffset(it)); err != nil {
 		return nil, fmt.Errorf("rkfw: read item %q: %w", it.Name, err)
+	}
+	return buf, nil
+}
+
+// ReadRange reads arbitrary image bytes. The loader blob is not an RKAF item,
+// so extracting it needs this.
+func (img *Image) ReadRange(off, length int64) ([]byte, error) {
+	if err := checkExtent("range", off, length, img.Size); err != nil {
+		return nil, err
+	}
+	buf := make([]byte, length)
+	if err := readAtFull(img.ReaderAt(), buf, off); err != nil {
+		return nil, fmt.Errorf("rkfw: read range [0x%x,0x%x): %w", off, off+length, err)
 	}
 	return buf, nil
 }

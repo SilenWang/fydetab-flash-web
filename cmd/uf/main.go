@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/SilenWang/rk3588-webflasher/internal/imageplan"
 	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
 	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
 	"github.com/SilenWang/rk3588-webflasher/internal/uf"
@@ -32,7 +34,7 @@ import (
 
 const (
 	toolName      = "uf"
-	versionString = "M3a (mock/replay write state machine; --dry-run plan unchanged)"
+	versionString = "M3b (image-embedded loader + pre-flight self-check; mock/replay unchanged)"
 )
 
 const (
@@ -59,6 +61,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		noReset      = fs.Bool("noreset", false, "skip the final device reset (rd)")
 		flashSectors = fs.Uint64("flash-sectors", 0, "flash size in 512-byte sectors (default: derive from the parameter table)")
 		eraseTail    = fs.String("erase-tail", string(uf.EraseNone), "what to do with partition tails the image does not fill: none|fill|erase-lba")
+		loaderPath   = fs.String("loader", "", "use this loader file instead of the image's own (marked non-image in the report)")
 		resumeFrom   = fs.String("resume-from", "", "resume at this item (skip every item before it)")
 		chunkSize    = fs.Int64("chunk-size", 0, "write chunk in bytes, 1..4 MiB (progress/retry granularity)")
 		retries      = fs.Int("retries", 1, "extra attempts for a timed out USB transfer")
@@ -166,12 +169,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 		ver.RKAFCRC = &crc
 	}
 
+	loader, err := selectLoader(img, *loaderPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", toolName, err)
+		return 2
+	}
+
 	rep, err := BuildReport(img, doc, ver, Options{FlashSectors: *flashSectors, NoReset: *noReset})
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", toolName, err)
 		return 2
 	}
+	rep.Loader = loader
 	applyEraseDecision(rep, eraseMode)
+	if loader != nil && loader.ChipCheck == "mismatch" {
+		warning := fmt.Sprintf("loader 与镜像 chip 不匹配（loader %s / 镜像 %s）：写入会在打开设备前被拒绝", loader.Chip, loader.ImageChip)
+		rep.Warnings = append(rep.Warnings, warning)
+	}
 
 	if mode == modeDryRun {
 		if *jsonOut {
@@ -195,13 +209,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	plan, err := planFromReport(rep)
+	plan, err := imageplan.WriterPlan(rep, loader)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", toolName, err)
 		return 2
 	}
 
-	conn, err := buildConnector(mode, *replayPath, plan, *mockFault)
+	conn, err := newConnector(mode, *replayPath, plan, *mockFault)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", toolName, err)
 		return 2
@@ -280,6 +294,38 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// selectLoader picks the Download Boot blob.
+//
+// The default is the loader the image itself carries in its RKFW header: that
+// is what the vendor's upgrade_tool used on the same board and image, and it is
+// the only combination that did not stop at index 0. --loader overrides it and
+// the report marks the override as non-image.
+func selectLoader(img *rkfw.Image, path string) (*imageplan.EmbeddedLoader, error) {
+	chip := ""
+	if img.HasRKFW {
+		chip = img.RKFW.ChipName()
+	}
+	if path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read --loader %s: %w", path, err)
+		}
+		return imageplan.FromFile(path, data, chip), nil
+	}
+	loader, err := imageplan.FromImage(img)
+	if errors.Is(err, imageplan.ErrNoImageLoader) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return loader, nil
+}
+
+// newConnector is buildConnector behind a variable so a test can assert that
+// --dry-run never asks for a device at all.
+var newConnector = buildConnector
+
 // buildConnector selects the mock device a run talks to.
 func buildConnector(mode, replayPath string, plan *uf.Plan, mockFault string) (uf.Connector, error) {
 	switch mode {
@@ -321,6 +367,7 @@ func writeEvent(w io.Writer, ev uf.Event) {
 func writeText(w io.Writer, rep *Report) {
 	fmt.Fprintf(w, "%s --dry-run: %s\n", toolName, rep.Image)
 	writeKeyValue(w, rep)
+	writeLoader(w, rep)
 	writeStages(w, rep)
 	writePartitions(w, rep)
 	writeUncovered(w, rep)
@@ -328,6 +375,23 @@ func writeText(w io.Writer, rep *Report) {
 	writeList(w, "warnings", rep.Warnings)
 	writeList(w, "notes", rep.Notes)
 	fmt.Fprintf(w, "\ndry run: nothing was written and no device was opened.\n")
+}
+
+// writeLoader prints the Download Boot blob's identity. The default is the one
+// the image carries; a --loader override is called out explicitly because a
+// loader from another package is what real hardware rejected at index 0.
+func writeLoader(w io.Writer, rep *Report) {
+	if rep.Loader == nil {
+		fmt.Fprintf(w, "loader\t(none: bare RKAF image; maskrom cannot be bootstrapped from it)\n")
+		return
+	}
+	fmt.Fprintf(w, "\nloader for Download Boot:\n")
+	for _, line := range rep.Loader.Summary() {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+	if rep.Loader.ChipCheck == "mismatch" {
+		fmt.Fprintf(w, "  ✗ 拒绝发送 db：loader 的 supportChip 与镜像 chip 不一致\n")
+	}
 }
 
 // writeErase prints the explicit answer to "is the uncovered tail erased?", so
@@ -506,21 +570,7 @@ func writeList(w io.Writer, title string, items []string) {
 }
 
 // humanBytes formats a byte count with binary units.
-func humanBytes(n int64) string {
-	if n < 0 {
-		return "unknown"
-	}
-	const unit = int64(1024)
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := unit, 0
-	for v := n / unit; v >= unit; v /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.2f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
-}
+func humanBytes(n int64) string { return imageplan.HumanBytes(n) }
 
 // groupDigits inserts thousands separators.
 func groupDigits(n uint64) string {

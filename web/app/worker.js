@@ -21,6 +21,7 @@ let host = null;
 let hostMode = 'usb';
 let mock = null;
 let rpcSeq = 0;
+let demoImageCache = null;
 const pendingRpc = new Map();
 
 function post(message, transfer) {
@@ -84,6 +85,67 @@ function resolveHostReply(msg) {
     return;
   }
   entry.reject(new Error(msg.error || 'host call failed'));
+}
+
+// --- image sources ----------------------------------------------------------
+//
+// The page hands over a File (structured-cloneable); Go gets an object with a
+// synchronous-looking read() that returns a Promise. rkfw reads a multi-GiB
+// image lazily through it, so nothing is copied into wasm memory up front.
+
+function fileSource(file) {
+  return {
+    name: file.name ?? 'update.img',
+    size: file.size ?? 0,
+    read: async (offset, length) => {
+      const sliced = file.slice(offset, offset + length);
+      return new Uint8Array(await sliced.arrayBuffer());
+    },
+  };
+}
+
+function bytesSource(name, bytes) {
+  return {
+    name,
+    size: bytes.byteLength,
+    read: async (offset, length) => bytes.subarray(offset, offset + length),
+  };
+}
+
+function fromBase64(text) {
+  const binary = atob(text);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+// resolveImage picks the image the page asked for: the file it sent, or the
+// cached synthetic demo image (built in Go, so the demo parses like a real one).
+async function resolveImage(msg) {
+  if (msg.file) return fileSource(msg.file);
+  if (msg.demo) {
+    if (!demoImageCache) {
+      const payload = JSON.parse(await globalThis.rk3588.demoImage());
+      demoImageCache = { name: payload.name, bytes: fromBase64(payload.bytes) };
+    }
+    return bytesSource(demoImageCache.name, demoImageCache.bytes);
+  }
+  throw new Error('no image supplied (need file or demo)');
+}
+
+async function runUf(msg, call) {
+  const source = await resolveImage(msg);
+  const onEvent = (kind, payload) => {
+    let parsed = payload;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      // keep the raw string
+    }
+    post({ type: 'uf-event', id: msg.id, kind, payload: parsed });
+  };
+  const text = await call(source, msg.opts ?? {}, onEvent);
+  post({ type: 'uf-result', id: msg.id, result: JSON.parse(text) });
 }
 
 // --- boot -------------------------------------------------------------------
@@ -162,6 +224,38 @@ self.onmessage = async (event) => {
         if (!globalThis.rk3588) throw new Error('core is not ready');
         const text = await globalThis.rk3588.inspectLoader(new Uint8Array(msg.bytes));
         post({ type: 'inspect', id: msg.id, payload: JSON.parse(text) });
+        return;
+      }
+      case 'uf-plan': {
+        if (!globalThis.rk3588) throw new Error('core is not ready');
+        await runUf(msg, (source, opts, onEvent) => globalThis.rk3588.ufPlan(source, opts, onEvent));
+        return;
+      }
+      case 'uf-run': {
+        if (!globalThis.rk3588) throw new Error('core is not ready');
+        await runUf(msg, (source, opts, onEvent) => globalThis.rk3588.ufRun(source, opts, onEvent));
+        return;
+      }
+      case 'uf-cancel': {
+        if (!globalThis.rk3588) throw new Error('core is not ready');
+        const text = await globalThis.rk3588.ufCancel();
+        post({ type: 'uf-cancel', id: msg.id, result: JSON.parse(text) });
+        return;
+      }
+      case 'image-loader': {
+        if (!globalThis.rk3588) throw new Error('core is not ready');
+        const source = await resolveImage(msg);
+        const text = await globalThis.rk3588.imageLoader(source);
+        const payload = JSON.parse(text);
+        const bytes = fromBase64(payload.bytes ?? '');
+        delete payload.bytes;
+        post({ type: 'image-loader', id: msg.id, payload, bytes }, [bytes.buffer]);
+        return;
+      }
+      case 'demo-image': {
+        if (!globalThis.rk3588) throw new Error('core is not ready');
+        const source = await resolveImage({ demo: true });
+        post({ type: 'demo-image', id: msg.id, payload: { name: source.name, size: source.size } });
         return;
       }
       case 'close': {

@@ -37,6 +37,12 @@ func main() {
 	set("bindBridge", js.FuncOf(bindBridge))
 	set("exec", js.FuncOf(exec))
 	set("inspectLoader", js.FuncOf(inspectLoader))
+	// M3b: the write path (internal/uf) bound to the same WebUSB bridge.
+	set("ufPlan", js.FuncOf(ufPlan))
+	set("ufRun", js.FuncOf(ufRun))
+	set("ufCancel", js.FuncOf(ufCancel))
+	set("imageLoader", js.FuncOf(imageLoader))
+	set("demoImage", js.FuncOf(demoImage))
 	set("close", js.FuncOf(closeDevice))
 	api.Set("version", device.CoreVersion)
 	js.Global().Set("rk3588", api)

@@ -2,32 +2,44 @@
 
 浏览器里复刻 Rockchip `upgrade_tool` 的刷机路径：协议与编排用 Go 编译成 WebAssembly，USB 走 WebUSB，完全本地运行。
 
-**当前阶段：M1（Go/WASM 核心 + WebUSB bridge + `ld`/`cd`/`sd` + Download Boot + 只读信息），
-加上 M2（离线 `uf --dry-run` 计划）与 M3a（写入层 + `uf` 状态机，mock/回放验证）。**
-M1 能把用户本地选择的 loader 通过 EP0 vendor request 写进 maskrom 的 RAM（Download Boot），让设备重新枚举成
-LOADER，然后读取 chip / flash / capability / storage。M3a 实现了 `WRITE_LBA`/`ERASE_LBA`/
-`DEVICE_RESET` 与完整 `uf` 状态机，但**只在内存设备与录制 trace 上运行**：浏览器/真机写入（WebUSB 绑定）
-属于 M3b，本阶段没有可点进真机的写 flash 路径。
+**当前阶段：M1（Go/WASM 核心 + WebUSB bridge + `ld`/`cd`/`sd` + Download Boot + 只读信息）、
+M2（离线 `uf --dry-run` 计划）、M3a（写入层 + `uf` 状态机，mock/回放验证），以及 M3b（WebUSB 写入绑定 +
+真机前自检）。**
+M3b 之后浏览器里已经有一条完整的写入路径：从 `update.img` 的 RKFW 头里切出**镜像自带的 loader** 做
+Download Boot，再用 `internal/uf` 的同一套状态机执行 `gpt → wl → rd`；写入前必须通过页面的逐项自检。
+真机端到端由 stage 6 负责，本阶段的目标是让第一次真机尝试尽量一次成功。
 
 > 为什么 maskrom 下读不到信息：裸 maskrom 不接受 rockusb 的 bulk CBW，5 条只读命令的 31 字节 CBW 全部被
-> STALL（M0b 真机实测，见 `internal/rockusb/testdata/maskrom-cbw-stall.json`）。必须先 `db` 进 LOADER。
+> STALL（M0b 真机实测，见 `internal/rockusb/testdata/maskrom-cbw-stall.json`）。所以**上电后的第一条命令必须
+> 是 `db`**：在它成功之前，页面禁用所有会发 CBW 的按钮——真机上正是这条把上电周期弄脏、让 `db` 停在
+> `index(0)` 的。
+>
+> loader 必须来自**同一份** `update.img`。上游 `download_boot()` 不校验 loader 与芯片是否匹配，错配的
+> loader 会被完整发出去、再被 BootROM 在 `index(0)` 拒收（看起来像 USB 故障）。本仓库默认用镜像自带的
+> loader，并在打开设备前解析 LDR 头比对 `supportChip`，详见
+> [`docs/protocol-notes.md` §11](docs/protocol-notes.md)。
 
 ## 页面与架构
 
 ```
-main thread (app.js)                     worker (worker.js)
-├─ WebUSB：requestDevice / open / claim   ├─ Go/WASM 核心（internal/rockusb + internal/device）
-├─ controlOut / transferIn / transferOut  ├─ bridge.js：把 Go 的同步调用包成 Promise
-├─ UI、命令终端、loader 文件选择           └─ 每次 USB 操作 → postMessage RPC → 主线程
-└─ RPC 服务端
+main thread (app.js)                        worker (worker.js)
+├─ WebUSB：requestDevice / open / claim      ├─ Go/WASM 核心（internal/rockusb + internal/device + internal/uf）
+├─ controlOut / transferIn / transferOut     ├─ bridge.js：把 Go 的同步调用包成 Promise
+├─ 镜像 File / plan / 自检清单 / 写入面板     ├─ imageplan：同一个 planner（CLI 与浏览器共用）
+└─ RPC 服务端                                └─ 每次 USB 操作 → postMessage RPC → 主线程
 ```
 
 - **主线程**独占 WebUSB：`requestDevice()` 需要用户手势，且 `navigator.usb` 只在 Window 上存在。
-- **worker** 跑 wasm：`db` 要发 ~140 KiB、几十个控制包，放在 worker 里不阻塞 UI。
+- **worker** 跑 wasm：`db` 要发 ~140 KiB、几十个控制包，放在 worker 里不阻塞 UI；`internal/uf` 的整段写入
+  也在 worker 里跑，只把进度和日志发回主线程。
 - Go 侧 `awaitPromise` 把 goroutine 停在 channel 上，Go 的 wasm 调度器把控制权还给事件循环，Promise 落地后再
   恢复——所以协议代码可以写成同步风格（`internal/rockusb` 不知道自己在浏览器里）。
+- **镜像读取**：页面把 `File` 交给 worker，worker 包装成 `{name, size, read(offset, length)}`；Go 用
+  `rkfw.OpenReaderAt` 分块读（头部、RKAF 表、parameter、loader、写入块），多 GiB 的镜像不会被整体搬进
+  wasm 内存。`internal/imageplan` 是 CLI 与页面共用的**唯一** planner。
 - **演示模式**把 RPC host 换成 worker 内的 mock 设备（`web/app/mock-host.js`），无需硬件即可演示
-  `ld → info 被拒绝 → db → 重新枚举 → info`，并且故意复现“maskrom 拒绝 CBW”这个真机结论。
+  `ld → info 被拒绝 → db → 重新枚举 → info`；写入演示则用 wasm 内的模拟器（`uf.SimConnector`），
+  同一套状态机，不访问 USB。
 
 ## 交付内容
 
@@ -35,21 +47,26 @@ main thread (app.js)                     worker (worker.js)
   - `protocol.go`：命令表、CBW/CSW 编解码、错误码、只读守卫。
   - `crc.go`：CRC-CCITT 与 Rockchip 自己的 CRC-32（多项式 `0x04C10DB7`，见下）。
   - `transport.go`：`Transport` 接口、每传输超时、只对超时重试的策略、`Session.Exec`、传输 trace。
-  - `downloadboot.go`：RKBOOT 容器解析与校验、vendor request 分包（含 4094/4095 两个上游特殊分支）、
-    `DownloadBoot` 与分类错误。
+  - `downloadboot.go`：RKBOOT 容器解析与校验（含 LDR 版本/构建日期/`supportChip`）、vendor request 分包
+    （含 4094/4095 两个上游特殊分支）、`DownloadBoot` 与按 loader 数据块 `index` 分类的错误。
   - `testdata/`：stage 2 真机 maskrom trace（5 条 CBW 全 STALL）与设备描述符，用作回放回归。
 - `internal/device/`：设备枚举/DevNo/模式、`ld`/`desc`/`cd`/`sd`/`db`/`info` 的 CLI 风格 shell。
-- `cmd/wasm/`：`syscall/js` 导出（`bindBridge` / `exec` / `inspectLoader` / `close`）与 JS bridge 传输。
-- `web/app/`：M1 页面（主线程 WebUSB host、module worker、mock 设备、演示 loader）。
-- `web/probe/`：M0 只读探针，保留下来用于抓 trace 与对照，不受 M1 影响。
+- `internal/imageplan/`：**唯一**的镜像 planner（RKAF item → parameter 分区 → LBA/阶段/未覆盖尾部），
+  外加镜像自带 loader 的提取与 chip 校验；CLI 与浏览器共用。
+- `internal/uf/`：写入状态机、IDB 模型、mock/replay 传输，以及把 `device.Bridge` 接进状态机的
+  `BridgeConnector`（WebUSB 绑定）。
+- `cmd/wasm/`：`syscall/js` 导出（`bindBridge` / `exec` / `inspectLoader` / `ufPlan` / `ufRun` /
+  `ufCancel` / `imageLoader` / `demoImage` / `close`）与 JS bridge 传输。
+- `web/app/`：页面（主线程 WebUSB host、module worker、mock 设备、逐项自检、写入面板）。
+- `web/probe/`：M0 只读探针，保留下来用于抓 trace 与对照，不受后续阶段影响。
 - `cmd/genprotocol/`：把 Go 的命令表/常量生成到 `web/app/protocol.js` 与 `web/probe/protocol.js`。
 
 ## 状态与命令
 
 | 状态 | 判定（`bcdUSB bit0`） | 能做 |
 |---|---|---|
-| **MASKROM** | `0` | `ld`、`desc`、`db` |
-| **LOADER** | `1` | `ld`、`desc`、`cd`、`sd`、`info` |
+| **MASKROM** | `0` | `ld`、`desc`、`db`（**第一条命令必须是 `db`**；此前的任何 CBW 都会被 STALL 并弄脏上电周期） |
+| **LOADER** | `1` | `ld`、`desc`、`cd`、`sd`、`info`，以及完整的 `uf` 写入 |
 
 | 命令 | 说明 |
 |---|---|
@@ -57,12 +74,16 @@ main thread (app.js)                     worker (worker.js)
 | `desc` | 打印描述符（无 USB 传输） |
 | `cd <n>` | ChangeDevice：按 DevNo 选择当前设备 |
 | `sd <n>` | SwitchDevice：重新绑定当前设备（`db` 重新枚举后用） |
-| `db` | Download Boot：把本地 loader 分块写入 maskrom RAM，然后等设备变成 LOADER |
+| `db` | Download Boot：把 loader 分块写入 maskrom RAM，然后等设备变成 LOADER |
 | `info [chip\|flash\|cap\|storage]` | 读只读信息（仅 LOADER；在 MASKROM 下打开设备前就拒绝） |
 | `help` / `version` | 帮助 / 核心版本 |
 
-`db` 的失败会区分 **BootROM 拒绝首包**、**首包之后的传输失败**、**loader 文件无效**、**loader 芯片不匹配**、
-**设备不在 maskrom**——不会只报一个 `-1`。
+页面上的写入路径（`ufPlan` / `ufRun`）不在 shell 命令表里：它是 `internal/uf` 的状态机，写入前必须通过
+自检清单，第一步就是 `db`。
+
+`db` 的失败会区分 **BootROM 拒收 loader 的第 0 个数据块（index 0）**、**第 0 块之后的传输失败**、
+**loader 文件无效**、**loader 芯片不匹配**、**设备不在 maskrom**——不会只报一个 `-1`。`index(0)` 是 loader
+文件里的第 0 个数据块（不是第 0 条 USB 请求）：数据已经发到设备，是 BootROM 主动拒收。
 
 ## 快速开始
 
@@ -81,15 +102,19 @@ pixi run gen    # 改了 internal/rockusb 或 internal/device 的命令表后重
 
 ### 真实设备
 
-1. 平板进 **MASKROM**（按住恢复键上电或按板子说明短接），USB 接入。
-2. 打开 `http://localhost:5173/app/`，点 **授权设备**，选 `0x2207` 设备。
-3. 点 **选择 loader**，选你自己机器上的 RK3588 loader（例如 `rk3588_spl_loader_v1.06.111.bin`，约 140 KiB）。
-   页面会立刻在本地校验 tag / CRC-32 / 段表 / 芯片，并列出 471/472 各段大小。
-4. 点 **Download Boot（db）**。成功后设备重新枚举为 LOADER，浏览器会撤销按实例的授权——再点一次
-   **授权设备**，然后 `ld` 应显示 `Mode=Loader`。
-5. 点 **读取信息（info）**，或直接在命令框里用 `ld` / `cd` / `sd` / `info`。
+1. 平板进 **MASKROM**（按住恢复键上电或按板子说明短接），USB 接入。**这一轮上电后不要先点任何读取按钮。**
+2. 打开 `http://localhost:5173/app/`，点 **授权设备**，选 `0x2207` 设备；`ld` 应显示 `Mode=Maskrom`。
+3. 点 **选择 update.img**。页面会读 RKFW 头、从镜像里切出 loader，显示它的 sha256、长度、LDR 构建日期与
+   chip 比对结果；**默认就用镜像自带的 loader**，不需要另外找文件。需要时可以用“改用本地 loader…”覆盖，
+   但页面会把它标成“非镜像自带”。
+4. 点 **生成写入计划**：写入项、目标 LBA、总传输量、未覆盖尾部（例如 STATE 的 4 GiB）都会列出来。
+   未覆盖尾部必须在下拉框里显式选择 `none / fill / erase-lba` 并打勾。
+5. 看 **真机前自检** 四项是否全绿（maskrom、loader 与镜像 chip 匹配、计划与 parameter 一致且尾部已选择、
+   第一条命令是 `db`）。全绿后 **开始写入** 才可点。
+6. 点 **开始写入**：状态机自己执行 `db → gpt(IDB) → wl … → rd`。成功后设备复位并重新枚举；再点一次
+   **授权设备**，`ld` 应为 `Mode=Loader`。
 
-> loader 由用户提供，仓库不分发 Rockchip loader blob，也不联网获取。
+> loader 由镜像提供，仓库不分发 Rockchip loader blob，也不联网获取。手动指定 loader 的文件只在本机内存里使用。
 
 ### 无设备演示
 
@@ -99,14 +124,45 @@ pixi run gen    # 改了 internal/rockusb 或 internal/device 的命令表后重
 - 自动载入一个**合成的** RKBOOT（段大小与真机 loader 相同，内容是填充字节，见 `web/app/mock-loader.js`）；
 - `db` 走完整的分包/CRC 路径 → mock 变 LOADER → `ld` 显示 `Mode=Loader` → `info` 返回 3588 / eMMC 等。
 
-## 只读与写入边界
+## 只读守卫与写入边界
 
 - 协议层：`internal/rockusb` 只声明 5 条只读 opcode 作为命令表；`Session.Exec` 对不在表里的 opcode 直接拒绝，
-  连 transport 都不碰。`TestNoWritePath` 会在有人加入 `WRITE_LBA`(0x15)、`ERASE_NORMAL`(0x06) 等写/擦/复位
-  操作码时失败。
+  连 transport 都不碰。`TestNoWritePath` 会在有人把 `WRITE_LBA`(0x15)、`ERASE_NORMAL`(0x06) 等写/擦/复位
+  操作码放进只读表时失败。
+- 写入层：`WRITE_LBA`/`ERASE_LBA`/`DEVICE_RESET` 单独声明在 `internal/uf`，由 `uf.Run` 的状态机驱动；
+  `uf --dry-run` 仍然完全不打开设备（`cmd/uf` 的 `TestDryRunNeverBuildsAConnector` 会在 dry-run 试图构造
+  连接器时失败）。
 - 命令层：shell 只有 `ld/desc/cd/sd/db/info/help/version`；`TestNoFlashWriteCommands` 钉住这一点。
-- 写入范围：`db` 只往设备 RAM 写 loader（EP0 vendor request，`0x40/0x0C`，index `0x0471`/`0x0472`），
-  不碰 flash、不擦除、不复位、不切存储。
+- 上机前：页面按 `preflight.js` 的规则门禁——maskrom 下、`db` 成功前，所有会发 CBW 的按钮（`info`）都禁用，
+  自检四项不通过时“开始写入”禁用。
+
+## 为什么必须用镜像自带的 loader
+
+真机上 `upgrade_tool DB` 两次都停在 `index(0)`。`index(0)` 是 **loader 文件里的第 0 个数据块**，不是第 0 条
+USB 请求——数据其实已经发到设备，是 BootROM 拒收。上游 `download_boot()` 直接信 loader 头
+（`dev.emDeviceType = pBoot->SupportDevice`），**不校验 loader 与芯片是否匹配**；于是错配的 loader 会被完整
+发出去再被拒，看起来像 USB 故障。
+
+实测的两份 loader：
+
+| 来源 | 长度 | sha256 | LDR 构建日期 |
+|---|---|---|---|
+| 官方 v23 镜像自带 | 422,336 B | `24c1d188…57c47` | 2024-09-06 |
+| SDK `rk3588_spl_loader_v1.06.111.bin` | 412,096 B | `4ca46b6f…e523ba` | 2022-06-28 |
+
+之前一直拿 SDK 那份配 v23 镜像，属于**真实错配**。同一个人用官方 `upgrade_tool` + 同一根线刷同一份 v23 镜像
+成功，所以硬件与线材可以排除。
+
+因此本仓库：
+
+1. **默认从 RKFW 头的 `loader offset/length` 切出镜像自带的 loader**，页面显示它的 sha256、长度、LDR 构建
+   日期；手动覆盖可以，但会被显式标记“非镜像自带”。
+2. 在打开设备前解析 LDR 头（`supportChip`、版本、日期）并与镜像 `chip` 比对，不一致就**拒绝发送 `db`**
+   （`ERR_LOADER_MISMATCH`，category `loader-chip-mismatch`），并说明原因。
+3. 把 `db` 失败分成 `first-block`（index 0 被拒：先查 loader 错配，再查是否干净上电周期，最后才是线材）与
+   `mid-transfer`（第 0 块已被接受，之后中断：线材/供电/截断的 loader）。
+
+细节与 LDR 头部字段见 [`docs/protocol-notes.md` §11](docs/protocol-notes.md)。
 
 ## 测试
 
@@ -119,25 +175,38 @@ pixi run test
   （逐字节比对 5 条 CBW，断言 STALL 只尝试 1 次、失败码 -3、没有额外出站数据）。
 - `internal/device`：`ld` 输出格式、DevNo 跨重新枚举保持稳定、`cd`/`sd`、模式门禁、`db` 各失败分支、
   `info` 各段、`db → 重新枚举 → info` 自动刷新、命令表白名单。
+- `internal/rkfw`：RKFW/RKAF 布局、CRC/MD5、真实 r132 片段回放、`OpenReaderAt`（浏览器用内存读取器）。
+- `internal/imageplan`：镜像自带 loader 的提取（sha256/长度/LDR 日期）、chip 错配拒绝、文件 loader 的
+  “非镜像自带”标记、`WriterPlan` 携带 loader 身份、演示镜像可计划。
+- `internal/uf`：状态机各阶段、失败/续跑、擦除尾部分支、**打开设备前拒绝错配 loader**、`db` 首块/中途失败
+  分类、`BridgeConnector` 走完 maskrom → db → LOADER → 写入 → rd。
+- `cmd/uf`：dry-run 文本/JSON、loader 默认来自镜像、`--loader` 覆盖、错配时 `--mock` 拒绝且不写、dry-run
+  不构造连接器。
 - `web/app/test/`：
   - `bridge.test.mjs`：worker 侧 bridge 契约（JSON 信封、handle 透传、字节规范化、超时、错误传播）。
   - `mock-host.test.mjs`：mock 设备的 CBW/CSW 行为、maskrom STALL、vendor index 校验、演示 loader 的 CRC。
   - `usb-host.test.mjs`：WebUSB host 的接口选择、setup 对象、STALL 传播、未授权句柄的错误提示。
   - `core.test.mjs`：**真实 wasm 核心** + mock 设备的完整 `ld → info 拒绝 → db → ld → info → cd/sd` 会话。
   - `worker.test.mjs`：直接加载生产 `worker.js`，走 mock 模式与 **worker↔主线程 RPC** 两条路径。
+  - `preflight.test.mjs`：自检清单与门禁——maskrom 下 db 前只读按钮被禁、loader 错配阻止写入、未覆盖尾部
+    必须显式确认、LOADER 态可读可写。
+  - `uf.test.mjs`：**真实 wasm 核心**的 `ufPlan` / `ufRun`（mock 模拟器）——镜像自带 loader 身份、计划来自
+    parameter、`db → gpt → wl → rd` 全流程与进度事件。
 
 ## 已知限制 / 待真机复验
 
-- **真机段落未复验**：`db → 重新枚举 → ld/info` 需要板子从 USB 掉线中恢复（记录在 issue 里），
-  M1 交付时以 mock + 单测 + Node 集成测试覆盖同一代码路径。
-- **`db` 失败的真实分类**：首包被 BootROM 拒绝有真机日志（`Boot_VendorRequest471 failed,err=-1`），
-  “传输中途失败 / loader 不匹配”的分类目前只有单测。
+- **真机端到端未复验**：`db → 重新枚举 → ld/info` 与整段 `uf` 写入需要板子从 USB 掉线中恢复（记录在 issue 里），
+  本阶段以 mock + 单测 + Node 集成测试覆盖同一代码路径；真机由 stage 6 负责。
+- **`db` 失败分类的证据分布**：`index(0)` 被拒有真机日志（`Boot_VendorRequest471 failed,err=-1`）；
+  “中途失败”的分类目前只有单测，需要一次真实中途失败来确认。
 - **浏览器 UI 未在真实 Chrome 里点过**：构建环境没有 Chrome/Chromium；`worker.js` 本身（含 RPC 与 wasm）
-  已用 Node 集成测试跑通，DOM 层（`app.js`）只做了语法检查。需要一次人工冒烟。
+  已用 Node 集成测试跑通，DOM 层（`app.js`）只做了语法检查，`preflight.js` 的规则有单测。需要一次人工冒烟。
 - 重新枚举后的授权：按“实例授权失效、需要重新点授权设备”实现（`connect` 事件会自动 `ld`），
   按 VID/PID 策略是否仍生效等真机结论。
-- 大镜像、`File.slice()` 流式读取属于后续阶段；本阶段一次读入 loader（~140 KiB）。
-- 页面仍没有写 flash 的路径：写入状态机只在 `internal/uf` + `uf --mock/--replay` 里，WebUSB 绑定是 M3b。
+- **大镜像读取已实现但未用真机大文件验证**：页面把 `File` 交给 worker，Go 通过 `rkfw.OpenReaderAt` 分块读；
+  默认不做全镜像 MD5（页面里 `verify:false`），需要时可打开。
+- **IDB 字节模型仍待真机核对**（`rk28-rc4` / `raw-loader`），真机第一次写入时应该先看日志里的
+  `gpt` 阶段是否符合预期。
 
 ## M0b 真机验收清单
 
@@ -230,25 +299,58 @@ pixi run uf --mock --log uf.ndjson update.img
 协议字段、mock trace 格式、日志 schema 与全部待核对项见
 [`docs/uf-write-path.md`](docs/uf-write-path.md)。
 
-## 已知限制（有意留到后续阶段）
+## M3b：WebUSB 写入绑定 + 真机前自检
 
-- **ReadFlashInfo 的短读**：rkdeveloptool 对这一条读 512 B 并接受 ≥11 B；本页按 CBW 里声明的 11 B 读取，以保持 CSW 不错位。若某台设备实际发更多字节，会落成 `ERR_CMD_NOTMATCH` 并记录，不会顺手多读——这正好是要在 M0b 里确认的事实。
-- **没有重连编排**：M1 起做设备选择与重新授权向导。
-- **没有 wasm**：M1 才把 Go 逻辑编成 `GOOS=js GOARCH=wasm` 放进 worker；M0 的 Go 包是它的种子。
-- **不支持切存储/复位**：`RKU_SwitchStorage`、`RKU_ResetDevice` 属于会改变设备状态的操作，不在只读范围内。
+M3b 把 M3a 的状态机接到真实 WebUSB transport，并把上机前的检查做进页面。**它默认不碰真机**——目标是让第一次
+真机尝试尽量一次成功；端到端真机验证是 stage 6。
+
+- **默认用镜像自带的 loader**：`ufPlan` 从 RKFW 头的 `loader offset/length` 切出 loader，页面显示它的 sha256、
+  长度、LDR 构建日期；与镜像 `chip` 不一致时报警。手动指定 loader 可以，但会显式标记“非镜像自带”。
+- **loader 自检（上游没有的）**：`internal/uf` 在**打开设备之前**解析 LDR 头（`supportChip`/版本/日期）并与
+  镜像 chip 比对，不一致直接拒绝（`ERR_LOADER_MISMATCH`，category `loader-chip-mismatch`），一个字节都不发。
+- **真实 transport 绑定**：`uf.BridgeConnector` 把页面的 `device.Bridge`（WebUSB）接进同一个 `uf.Run`；
+  第一次 `Open` 找 maskrom，`db` 之后的下一次 `Open` 找重新枚举出来的 LOADER。mock 与 replay 路径不变。
+- **真机前自检清单**（页面上逐项显示、不通过则写入按钮禁用）：
+  1. 设备在 maskrom（`2207:350b`，`bcdUSB` bit0=0）；
+  2. loader 与镜像 `chip` 匹配（默认镜像自带）；
+  3. 写入计划与 `parameter` 一致、未覆盖尾部（例如 STATE 的 4 GiB）已显式选择；
+  4. **上电后第一条命令必须是 `db`**——`db` 成功前禁用所有会发 CBW 的按钮（`info` 等），并显示原因。
+     规则在 `web/app/preflight.js`，有独立的 node 单测。
+- **失败分类**：`db` 首块被拒（`first-block`，index 0）与中途失败（`mid-transfer`）分开报，并给出可操作结论
+  （loader 与镜像不匹配 → 不是干净上电周期 → 线材，按这个顺序）。
+
+```bash
+# 计划 + 镜像自带 loader 的身份（sha256 / 长度 / LDR 构建日期）
+pixi run uf --dry-run --flash-sectors 250069680 update.img
+
+# 显式换一个 loader（报告里标成非镜像自带；错配会在打开设备前被拒）
+pixi run uf --dry-run --loader rk3588_spl_loader_v1.06.111.bin update.img
+
+# mock 全流程，默认用镜像自带 loader
+pixi run uf --mock update.img
+```
+
+
+
+## 仍然成立的早期限制
+
+- **ReadFlashInfo 的短读**：rkdeveloptool 对这一条读 512 B 并接受 ≥11 B；本页按 CBW 里声明的 11 B 读取，以保持 CSW 不错位。若某台设备实际发更多字节，会落成 `ERR_CMD_NOTMATCH` 并记录，不会顺手多读——这正好是要在真机上确认的事实。
 
 ## 目录结构
 
 ```
 pixi.toml / pixi.lock       依赖与任务（唯一入口）
-internal/rockusb/           只读协议子集 + 单测
-internal/uf/                写入层、IDB 模型、uf 状态机、mock/回放与 JSON 日志
+internal/rockusb/           只读协议子集、RKBOOT 解析、Download Boot、单测
+internal/device/            设备枚举与 shell（ld/desc/cd/sd/db/info）
+internal/imageplan/         唯一的镜像 planner + 镜像自带 loader 提取 + 演示镜像
+internal/uf/                写入状态机、IDB 模型、mock/回放、BridgeConnector、JSON 日志
 cmd/uf/                     uf --dry-run 计划 + --mock/--replay 写入状态机
-cmd/genprotocol/            生成 web/probe/protocol.js
-web/probe/                  index.html / probe.js / rockusb.js / styles.css
-                            protocol.js 为生成物；*.test.mjs 为单测与伪设备冒烟测试
+cmd/wasm/                   Go/WASM 核心导出（shell + ufPlan/ufRun/ufCancel/imageLoader/demoImage）
+cmd/genprotocol/            生成 web/app/protocol.js 与 web/probe/protocol.js
+web/app/                    页面：主线程 WebUSB host、worker、mock 设备、preflight.js、写入面板
+web/probe/                  M0 只读探针（保留用于抓 trace 与对照）
 tools/serve.mjs             本地静态服务
-docs/protocol-notes.md      协议笔记与待确认项
+docs/protocol-notes.md      协议笔记（含 §11 “为什么必须用镜像自带的 loader”）
 docs/uf-write-path.md       写入命令、状态机、IDB/擦除假设、mock trace 与日志格式
 ```
 

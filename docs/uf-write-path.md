@@ -1,14 +1,15 @@
-# rockusb 写入层与 `uf` 状态机（M3a，mock/回放）
+# rockusb 写入层与 `uf` 状态机（M3a + M3b）
 
-本文件记录 M3a 的实现依据、状态机、mock 与日志格式，以及**必须等真机才能确认**的部分。
-所有协议字段仍然来自 Rockchip 的 GPL-2.0
+本文件记录 M3a 的实现依据、状态机、mock 与日志格式，M3b 的 WebUSB 绑定与 loader 自检，以及**必须等真机
+才能确认**的部分。所有协议字段仍然来自 Rockchip 的 GPL-2.0
 [rkdeveloptool](https://github.com/rockchip-linux/rkdeveloptool)（`RKComm.h`、`RKComm.cpp`、
 `RKDevice.cpp`、`main.cpp`），IDB 字节模型来自公开重实现
 [rk_image_tool](https://github.com/TheGammaSqueeze/rk_image_tool)。本仓库不分发 loader 或
 `upgrade_tool` 二进制。
 
-**本阶段不碰真机**：`internal/uf` 只依赖 `rockusb.Transport`，`uf --mock/--replay` 用内存设备与
-录制 trace 走完整流程；真正的 WebUSB 绑定在 M3b。`uf --dry-run` 仍然不打开设备。
+**M3b 把状态机接到了真实 transport，但本阶段的验收不碰真机**：`internal/uf` 只依赖
+`rockusb.Transport`，`uf --mock/--replay` 用内存设备与录制 trace 走完整流程，浏览器里则用
+`uf.BridgeConnector` 接到 WebUSB。`uf --dry-run` 仍然不打开设备（`TestDryRunNeverBuildsAConnector`）。
 
 ## 1. 为什么写操作码不在 `internal/rockusb` 里
 
@@ -50,6 +51,8 @@
 ## 4. 状态机
 
 ```
+loader 自检（不碰设备）── 解析 LDR 头，supportChip 与镜像 chip 比对，不一致直接拒绝
+                                              ▼
 connect ─┬─ MASKROM ──> Download Boot(ul) ──> 等待重新枚举为 LOADER
          └─ LOADER ───────────────────────────┐
                                               ▼
@@ -64,8 +67,8 @@ connect ─┬─ MASKROM ──> Download Boot(ul) ──> 等待重新枚举�
                          rd（`--noreset` 时跳过）
 ```
 
-每条命令都会写进 trace（`rockusb.Transfer`），`Log` 再补一条可读摘要。预检失败（芯片不匹配、
-目标 LBA 超出 flash）**在第一次写之前**中止。
+每条命令都会写进 trace（`rockusb.Transfer`），`Log` 再补一条可读摘要。预检失败（loader 与镜像 chip
+不匹配、设备芯片不匹配、目标 LBA 超出 flash）**在第一次写之前**中止。
 
 ### 失败、重新枚举与续跑
 
@@ -178,19 +181,68 @@ pixi run uf --mock --log uf.ndjson update.img             # 导出 JSON 日志
 | `transfer` | 每条 USB 传输：`kind`/`endpoint`/`stage`/`attempt`/长度/耗时/状态 + 一行 `summary` |
 | `progress` | 进度快照：phase、item、整体 done/total/percent、item done/total |
 | `event` | 人可读的 info/warn/error 行（与 CLI stderr 相同） |
-| `result` | 最终 `uf.Report`（阶段、item、IDB、擦除、写入字节数、`nextItem`/`hint`、错误码） |
+| `result` | 最终 `uf.Report`（阶段、item、IDB、擦除、写入字节数、`loader` 身份与 chip 比对、`dbFailure` 分类、`nextItem`/`hint`、错误码） |
 
 日志写失败不会把成功的刷写变成失败：`Recorder` 记住第一个错误并丢弃后续记录，
 `Recorder.Err()` 报告它。
 
-## 9. 仍需真机确认的清单
+## 9. WebUSB 绑定与 loader 自检（M3b）
+
+### 9.1 loader 从哪来
+
+默认是**镜像自带的 loader**：`internal/imageplan.FromImage()` 按 RKFW 头的 `loader_offset/length` 切出
+blob，算 sha256，解析 LDR/RKBOOT 头（`supportChip`、版本、构建日期），并与镜像头的 `chip` 比对。
+`uf --loader <file>` 可以覆盖，但 `LoaderPlan.Source` 会变成 `file`、`Report.Loader.NonImage = true`，
+页面也会标成“非镜像自带”。
+
+`Report.Loader` 记录：
+
+```json
+{"source":"image","name":"update.img @0x66","offset":102,"length":422336,
+ "sha256":"24c1d188…","version":"1.6.6","buildTime":"2024-09-06 12:34:56 UTC",
+ "chip":"RK3588","chipExpected":"RK3588","chipCheck":"ok","nonImage":false}
+```
+
+### 9.2 打开设备前的自检
+
+`runner.checkLoaderPlan()` 在 `connect` 之前执行（`internal/uf/runner.go`）：解析 loader → 比对
+loader 的 `supportChip` 与 `Plan.Chip` → 不一致返回 `ERR_LOADER_MISMATCH`（本地错误码 `-15`，
+category `loader-chip-mismatch`），**一次 `Open` 都不会发生**。这是上游 `download_boot()` 缺的那一步：
+上游直接把 `loader->SupportDevice` 赋给 `emDeviceType` 就发。原因与实测数据见
+[`protocol-notes.md` §11](protocol-notes.md)。
+
+### 9.3 `db` 失败的两种分类
+
+| category | 判据 | 结论 |
+|---|---|---|
+| `first-block` | 第 0 个数据块（index 0）的首包 USB 传输失败 | 先查 loader 是否镜像自带，再查是否干净上电周期，最后线材 |
+| `mid-transfer` | 首块已接受，之后（更后面的块或同块后续包）失败 | 线材/供电、loader 截断；不能从中间续传，整份重发 |
+
+`Report.DB` 带 `category`/`index`/`blockName`/`detail`；`RunError.Category` 同步给出，页面据此换个说法。
+
+### 9.4 `device.Bridge` → `uf.Connector`
+
+`uf.BridgeConnector`（`internal/uf/bridge.go`）是 M3b 的绑定层：
+
+- `Open` 先 `Bridge.List()`，按 `bcdUSB bit0` 选设备：第一次要 MASKROM，`db` 之后要 LOADER；
+- 优先按页面给的 opaque `Handle` 打开（设备列表重排也不会开错板子），失败再退回到“期望模式的第一台”；
+- `Link` 从 `device.Info` 派生，页面的接口/端点扫描仍然是唯一知道 descriptor 的地方；
+- `LastSeen()` 留给页面解释“为什么没找到设备”（最常见的是重新枚举导致按实例授权失效）。
+
+浏览器侧由 `cmd/wasm` 的 `ufPlan` / `ufRun` / `ufCancel` 驱动：镜像以
+`{name, size, read(offset,length)}` 的形式交给 Go，`rkfw.OpenReaderAt` 分块读取，所以多 GiB 的镜像
+不会被整体搬进 wasm 内存；`ufRun` 的 `mock:true` 走 `uf.SimConnector`（同一状态机，不碰 USB）。
+
+## 10. 仍需真机确认的清单
 
 1. `WRITE_LBA` 的单次 128 扇区上限、CSW 时序与 RK3588 loader 的实际行为；
 2. IDB 字节模型（第 5 节全部三项）；
 3. 擦除尾部是否必要/如何生效（第 6 节）；
 4. `DEVICE_RESET` 后设备重新枚举的时序与浏览器授权失效方式；
 5. `ERASE_LBA` 在 eMMC 上的耗时与返回值；
-6. flash 容量与 plan 的偏差（`--flash-sectors` 是否需要用真机值）。
+6. flash 容量与 plan 的偏差（`--flash-sectors` 是否需要用真机值）；
+7. **镜像自带 loader 的一次通过率**：M3b 的自检与“第一条命令必须是 db”就是为了这一次；
+   真机第一次失败时，先看 `Report.DB.category` 是 `first-block` 还是 `mid-transfer`。
 
 真机结论在 SIL-511/SIL-515 恢复后回填，并据此调整 `internal/uf` 的模型与测试期望——不为了
 让测试通过而改期望值。

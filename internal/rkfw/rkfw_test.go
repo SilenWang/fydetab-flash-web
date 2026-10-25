@@ -606,3 +606,61 @@ func TestReservedItemMarkers(t *testing.T) {
 		t.Fatal("normal item must have data")
 	}
 }
+
+// OpenReaderAt is the browser core's path into the parser: the page owns the
+// image bytes and hands Go a ReaderAt, so every payload read and both checksum
+// passes have to work without a filesystem path.
+func TestOpenReaderAtReadsPayloadsWithoutAPath(t *testing.T) {
+	loader := bytes.Repeat([]byte{0xA5}, 4096)
+	rkaf := buildRKAF(t, []fixturePart{
+		item("parameter", []byte("CMDLINE: mtdparts=rk29xxnand:0x4@0x40(parameter)")),
+		item("boot", bytes.Repeat([]byte{0x07}, 1024)),
+	})
+	data := appendMD5(buildRKFWBody(loader, rkaf))
+
+	img, err := OpenReaderAt(bytes.NewReader(data), int64(len(data)), "memory.img")
+	if err != nil {
+		t.Fatalf("OpenReaderAt: %v", err)
+	}
+	if img.Path != "memory.img" {
+		t.Fatalf("Path = %q, want the supplied name", img.Path)
+	}
+	if !img.HasRKFW || img.LoaderLength != int64(len(loader)) {
+		t.Fatalf("loader = %d bytes (rkfw=%v), want %d", img.LoaderLength, img.HasRKFW, len(loader))
+	}
+
+	raw, err := img.ReadItem(*img.Parameter, 4096)
+	if err != nil {
+		t.Fatalf("ReadItem: %v", err)
+	}
+	if got := string(raw); got != "CMDLINE: mtdparts=rk29xxnand:0x4@0x40(parameter)" {
+		t.Fatalf("parameter payload = %q", got)
+	}
+
+	blob, err := img.ReadRange(img.LoaderOffset, img.LoaderLength)
+	if err != nil {
+		t.Fatalf("ReadRange(loader): %v", err)
+	}
+	if !bytes.Equal(blob, loader) {
+		t.Fatalf("loader bytes differ from the source")
+	}
+
+	md5res, err := img.VerifyMD5()
+	if err != nil {
+		t.Fatalf("VerifyMD5: %v", err)
+	}
+	if !md5res.OK {
+		t.Fatalf("VerifyMD5 = %+v", md5res)
+	}
+	crc, err := img.VerifyRKAFCRC()
+	if err != nil {
+		t.Fatalf("VerifyRKAFCRC: %v", err)
+	}
+	if !crc.OK {
+		t.Fatalf("VerifyRKAFCRC = %+v", crc)
+	}
+
+	if _, err := OpenReaderAt(nil, int64(len(data)), "nil"); err == nil {
+		t.Fatal("OpenReaderAt(nil) must fail")
+	}
+}

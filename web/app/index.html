@@ -4,14 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
-    <title>RK3588 WebFlasher · M1（Go/WASM + WebUSB）</title>
+    <title>RK3588 WebFlasher · M3b（WebUSB 写入 + 真机前自检）</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header class="page-header">
       <div class="title">
         <h1>RK3588 WebFlasher</h1>
-        <p class="subtitle">rockusb over WebUSB · Go/WASM 核心 · M1（ld / cd / sd / db / info）</p>
+        <p class="subtitle">rockusb over WebUSB · Go/WASM 核心 · M3b（uf 写入 + 镜像自带 loader + 上机前自检）</p>
       </div>
       <div class="badges">
         <span id="mode-badge" class="badge muted" data-mode="none">无设备</span>
@@ -20,11 +20,11 @@
     </header>
 
     <section class="banner safety" aria-label="写入范围声明">
-      <strong>只写设备 RAM，不写 flash。</strong>
+      <strong>本页会写 flash。</strong>
       <span>
-        <code>db</code>（Download Boot）只会用 EP0 vendor request（<code>0x40/0x0C</code>，index
-        <code>0x0471</code>/<code>0x0472</code>）把<strong>你本地选择的 loader</strong> 分块写进 maskrom 的 RAM；
-        本阶段没有 <code>uf</code>、没有擦除、没有 flash 写入、没有复位。loader 由你提供，工具不分发。
+        Download Boot 只用 EP0 vendor request 把 <strong>镜像自带</strong>的 loader 写进 maskrom RAM；随后的
+        <code>gpt</code> / <code>wl</code> / <code>rd</code> 由 <code>internal/uf</code> 的同一套状态机执行。写入前必须逐项通过下面的自检；
+        <strong>上电后的第一条命令必须是 <code>db</code></strong>，在它成功之前页面会禁用所有会发 CBW 的按钮。
       </span>
     </section>
 
@@ -50,24 +50,63 @@
         </section>
 
         <section class="panel">
-          <h2>2 · loader（本地文件）</h2>
+          <h2>2 · 镜像与 loader</h2>
+          <div class="controls">
+            <label class="file">
+              <input id="file-image" type="file" accept=".img,.bin,application/octet-stream" />
+              <span id="image-label">选择 update.img…</span>
+            </label>
+            <button id="btn-demo-image" type="button" hidden>载入演示镜像</button>
+            <button id="btn-plan" type="button" class="primary" disabled>生成写入计划</button>
+          </div>
+          <p class="hint">
+            默认使用<strong>镜像自带的 loader</strong>（RKFW 头的 loader offset/length），页面会切出来并显示 sha256、长度和 LDR 构建日期，
+            再与镜像的 chip 比对。需要时可手动指定别的 loader，但会被标记“非镜像自带”——真机上错配的 loader 会在 <code>index 0</code> 被 BootROM 拒收。
+          </p>
+          <pre id="image-summary" class="summary">尚未选择镜像。</pre>
+          <pre id="loader-summary" class="summary">尚未生成计划。</pre>
           <div class="controls">
             <label class="file">
               <input id="file-loader" type="file" accept=".bin,application/octet-stream" />
-              <span id="file-label">选择 loader…</span>
+              <span id="file-label">改用本地 loader…（可选）</span>
             </label>
             <button id="btn-demo-loader" type="button" hidden>载入演示 loader</button>
-            <button id="btn-db" type="button" class="primary">Download Boot（db）</button>
+            <button id="btn-clear-loader" type="button">改回镜像自带</button>
           </div>
-          <p class="hint">
-            需要 RK3588 的 RKBOOT loader，例如 <code>rk3588_spl_loader_v1.06.111.bin</code>（约 140 KiB）。
-            选择后立即在本地校验 tag / CRC-32 / 段表 / 芯片，不会联网、不会上传。
-          </p>
-          <pre id="loader-summary" class="summary">尚未选择 loader。</pre>
         </section>
 
         <section class="panel">
-          <h2>3 · 命令</h2>
+          <h2>3 · 真机前自检</h2>
+          <p class="hint">逐项自动判定。任意一项不通过，“开始写入”都保持禁用；把鼠标停在某项上可以看到原因。</p>
+          <ul id="checklist" class="checklist"></ul>
+          <p id="readonly-note" class="hint warn-text"></p>
+        </section>
+
+        <section class="panel">
+          <h2>4 · 写入（uf）</h2>
+          <div class="controls">
+            <label class="field">
+              未覆盖的分区尾部
+              <select id="erase-mode">
+                <option value="none">保持原内容（none）</option>
+                <option value="fill">写 0xFF（fill）</option>
+                <option value="erase-lba">ERASE_LBA 擦除（erase-lba）</option>
+              </select>
+            </label>
+            <label class="toggle">
+              <input id="chk-erase-confirm" type="checkbox" />
+              我确认这个处置
+            </label>
+          </div>
+          <div class="controls">
+            <button id="btn-write" type="button" class="danger" disabled>开始写入</button>
+            <button id="btn-cancel-write" type="button" disabled>取消</button>
+          </div>
+          <pre id="uf-log" class="terminal small">尚未开始写入。</pre>
+        </section>
+
+        <section class="panel">
+          <h2>5 · 命令（M1 shell）</h2>
           <form id="command-form" class="command">
             <span class="prompt">›</span>
             <input id="command-input" type="text" autocomplete="off" spellcheck="false"
@@ -79,10 +118,14 @@
             <button type="button" data-command="desc">desc</button>
             <button type="button" data-command="cd 1">cd 1</button>
             <button type="button" data-command="sd 1">sd 1</button>
-            <button type="button" data-command="info">info</button>
+            <button type="button" data-command="info" data-cbw="true">info</button>
+            <button id="btn-db" type="button" data-cbw="true">Download Boot（db）</button>
             <button type="button" data-command="help">help</button>
             <button id="btn-clear" type="button">清空输出</button>
           </div>
+          <p class="hint">
+            <code>info</code> 与 <code>db</code> 会发 CBW/控制传输：设备在 maskrom 且 db 尚未成功时它们不可用——真机上正是这条把上电周期弄脏的。
+          </p>
           <pre id="terminal" class="terminal" aria-live="polite"></pre>
         </section>
       </div>
@@ -124,8 +167,8 @@
       <p>
         协议来自 Rockchip 的 GPL-2.0
         <a href="https://github.com/rockchip-linux/rkdeveloptool" rel="noreferrer">rkdeveloptool</a>
-        （<code>RKComm.cpp</code> 的 <code>RKU_DeviceRequest</code> 与 <code>RKDevice::DownloadBoot</code>）；实现见
-        <code>internal/rockusb</code>、<code>internal/device</code>、<code>cmd/wasm</code>。本仓库以 GPL-2.0 发布，
+        （<code>RKU_DeviceRequest</code>、<code>RKDevice::DownloadBoot</code>、<code>RKComm.cpp</code> 的写命令）；实现见
+        <code>internal/rockusb</code>、<code>internal/uf</code>、<code>internal/imageplan</code>、<code>cmd/wasm</code>。本仓库以 GPL-2.0 发布，
         不包含 <code>upgrade_tool</code> 二进制，也不分发任何 Rockchip loader blob。
       </p>
     </footer>

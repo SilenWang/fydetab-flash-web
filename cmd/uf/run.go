@@ -6,71 +6,30 @@ import (
 	"os"
 	"strings"
 
+	"github.com/SilenWang/rk3588-webflasher/internal/imageplan"
 	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
 	"github.com/SilenWang/rk3588-webflasher/internal/uf"
 )
 
-// planFromReport projects the M2 dry-run report onto the writer's plan. This is
-// the only bridge between planning and writing: item order, target LBAs, the
-// IDB byte count and the uncovered tails all come from BuildReport, so
-// `uf --dry-run` and `uf --mock` cannot disagree about what would be written.
+// planFromReport projects the M2 dry-run report onto the writer's plan using
+// the loader the report says the image carries. It is the CLI-test entry point;
+// run() calls imageplan.WriterPlan with the loader's full identity so the
+// report can name its sha256 and build date.
 func planFromReport(rep *Report) (*uf.Plan, error) {
-	plan := &uf.Plan{
-		Image:      rep.Image,
-		Chip:       rep.Container.Chip,
-		NoReset:    rep.NoReset,
-		TotalBytes: rep.TotalBytes,
-	}
+	var loader *imageplan.EmbeddedLoader
 	if rep.Container.HasRKFW && rep.Container.LoaderLength > 0 {
-		plan.Loader = &uf.LoaderPlan{
+		loader = &imageplan.EmbeddedLoader{
+			Source:     imageplan.LoaderSourceImage,
 			FileOffset: rep.Container.LoaderOffset,
 			Length:     rep.Container.LoaderLength,
 		}
 	}
-	for _, st := range rep.Stages {
-		if st.Phase == "gpt" {
-			plan.IDB = uf.IDBPlan{LBASector: uf.IDBDefaultLBA, Bytes: st.Bytes}
-			break
-		}
-	}
-	for _, it := range rep.Items {
-		if it.Action != actionWrite || !it.TargetKnown {
-			continue
-		}
-		plan.Items = append(plan.Items, uf.Item{
-			Name:       it.Name,
-			Partition:  it.Partition,
-			FileOffset: it.FileOffset,
-			Size:       it.Size,
-			PaddedSize: it.PaddedSize,
-			TargetLBA:  uint32(it.TargetLBA),
-		})
-	}
-	for _, u := range rep.Uncovered {
-		plan.Tails = append(plan.Tails, uf.Tail{
-			Partition: u.Partition,
-			FirstLBA:  u.FirstLBA,
-			Bytes:     u.Bytes,
-		})
-	}
-	if rep.GPT != nil {
-		plan.DiskSectors = rep.GPT.DiskSectors
-		plan.DiskKnown = rep.GPT.DiskKnown
-		plan.DiskDerived = rep.GPT.DiskDerived
-	}
-	return plan, plan.Validate()
+	return imageplan.WriterPlan(rep, loader)
 }
 
 // applyEraseDecision makes the "erase or not" choice visible in the dry-run
 // report itself, instead of leaving it to prose in the notes.
-func applyEraseDecision(rep *Report, mode uf.EraseMode) {
-	dec := &EraseDecision{Mode: string(mode), Detail: mode.Describe(), Tails: len(rep.Uncovered)}
-	for _, u := range rep.Uncovered {
-		dec.Bytes += u.Bytes
-	}
-	rep.Erase = dec
-	rep.Notes = append(rep.Notes, fmt.Sprintf("- 擦除语义（--erase-tail=%s）：%s；未覆盖区间共 %s。", mode, mode.Describe(), humanBytes(dec.Bytes)))
-}
+func applyEraseDecision(rep *Report, mode uf.EraseMode) { imageplan.ApplyEraseDecision(rep, mode) }
 
 // parseMockFault turns --mock-fault into a simulator fault tied to an item's
 // first LBA, so the failure lands exactly where a real device would fail.
@@ -194,6 +153,16 @@ func runResultSummary(rep *uf.Report) []string {
 	}
 	lines = append(lines, fmt.Sprintf("result: %s, wrote %s, erased %s, reset=%t, %s",
 		state, humanBytes(rep.BytesWritten), humanBytes(rep.BytesErased), rep.Reset, durationText(rep.DurationMs)))
+	if rep.Error != nil {
+		// The code and the category are what a real failure has to be triaged
+		// by ("first-block" is a loader/power-cycle problem, not a cable one),
+		// so they belong in the human summary, not only in --json.
+		detail := fmt.Sprintf("error: %s (%d)", rep.Error.CodeName, rep.Error.Code)
+		if rep.Error.Category != "" {
+			detail += fmt.Sprintf(" [%s]", rep.Error.Category)
+		}
+		lines = append(lines, detail+" "+rep.Error.Detail)
+	}
 	if rep.NextItem != "" {
 		lines = append(lines, fmt.Sprintf("next item: %s (resume with --resume-from %s)", rep.NextItem, rep.NextItem))
 	}

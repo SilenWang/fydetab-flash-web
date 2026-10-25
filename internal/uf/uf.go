@@ -44,13 +44,20 @@ const (
 	// ErrCancelled is a local code: the caller cancelled the run. rkdeveloptool
 	// has no ERR_* value for cancellation because upstream cannot cancel.
 	ErrCancelled rockusb.ErrorCode = -14
+	// ErrLoaderMismatch is a local code: the loader cannot be sent for this
+	// image (its supportChip disagrees with the image's chip). Upstream has no
+	// such error because download_boot() does not check at all.
+	ErrLoaderMismatch rockusb.ErrorCode = -15
 )
 
 // CodeName renders an rkdeveloptool error code, including the local codes this
 // package adds.
 func CodeName(code rockusb.ErrorCode) string {
-	if code == ErrCancelled {
+	switch code {
+	case ErrCancelled:
 		return "ERR_CANCELLED"
+	case ErrLoaderMismatch:
+		return "ERR_LOADER_MISMATCH"
 	}
 	return code.String()
 }

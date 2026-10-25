@@ -179,6 +179,14 @@ func buildLoader(t *testing.T, chipType uint32, tag uint32, segments []testSegme
 	binary.LittleEndian.PutUint16(buf[4:6], LoaderHeaderSize)
 	binary.LittleEndian.PutUint32(buf[6:10], 0x00010006)
 	binary.LittleEndian.PutUint32(buf[10:14], 0x01030000)
+	// A fixed synthetic build time: the header layout is what matters, and a
+	// real date here would imply the fixture is a vendor loader.
+	binary.LittleEndian.PutUint16(buf[14:16], 2019)
+	buf[16] = 7 // July
+	buf[17] = 1
+	buf[18] = 2
+	buf[19] = 3
+	buf[20] = 4
 	binary.LittleEndian.PutUint32(buf[21:25], chipType)
 	buf[25] = byte(count471)
 	binary.LittleEndian.PutUint32(buf[26:30], offset471)

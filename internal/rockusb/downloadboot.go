@@ -60,6 +60,38 @@ type LoaderEntry struct {
 	DataDelay  uint32 `json:"dataDelayMs"`
 }
 
+// LoaderTime is the build timestamp in an RKBOOT header (STRUCT_RKTIME: a
+// uint16 year followed by month/day/hour/minute/second). It is the only
+// "which loader is this" field besides the CRC, and it is what distinguishes
+// the two loaders that were in play on real hardware: the official v23 image's
+// loader (built 2024-09-06) and the SDK's v1.06.111 (built 2022-06-28).
+type LoaderTime struct {
+	Year   uint16 `json:"year"`
+	Month  uint8  `json:"month"`
+	Day    uint8  `json:"day"`
+	Hour   uint8  `json:"hour"`
+	Minute uint8  `json:"minute"`
+	Second uint8  `json:"second"`
+}
+
+// Valid reports whether every field is a real calendar value. A zeroed
+// timestamp means the loader build did not record one, not "year 0".
+func (t LoaderTime) Valid() bool {
+	if t.Year == 0 || t.Month < 1 || t.Month > 12 || t.Day < 1 || t.Day > 31 || t.Hour > 23 || t.Minute > 59 || t.Second > 59 {
+		return false
+	}
+	parsed := time.Date(int(t.Year), time.Month(t.Month), int(t.Day), int(t.Hour), int(t.Minute), int(t.Second), 0, time.UTC)
+	return parsed.Day() == int(t.Day) && parsed.Month() == time.Month(t.Month) && parsed.Year() == int(t.Year)
+}
+
+// String renders the timestamp, or "unknown" when the header leaves it zeroed.
+func (t LoaderTime) String() string {
+	if !t.Valid() {
+		return "unknown"
+	}
+	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d UTC", t.Year, t.Month, t.Day, t.Hour, t.Minute, t.Second)
+}
+
 // LoaderImage is a parsed RKBOOT container. The caller owns the bytes and must
 // not mutate them while the image is in use.
 type LoaderImage struct {
@@ -67,6 +99,7 @@ type LoaderImage struct {
 	TagName       string        `json:"tagName"`
 	Version       uint32        `json:"version"`
 	MergeVersion  uint32        `json:"mergeVersion"`
+	BuildTime     LoaderTime    `json:"buildTime"`
 	ChipType      uint32        `json:"chipType"`
 	SignFlag      uint8         `json:"signFlag"`
 	RC4Flag       uint8         `json:"rc4Flag"`
@@ -77,6 +110,93 @@ type LoaderImage struct {
 	Size          int           `json:"size"`
 
 	data []byte
+}
+
+// VersionString renders dwVersion the same way RKFW's image header is rendered
+// (major from the top byte, patch from the low 16 bits), so the two versions a
+// user compares are written the same way.
+func (img *LoaderImage) VersionString() string {
+	return fmt.Sprintf("%d.%d.%d", byte(img.Version>>24), byte(img.Version>>16), uint16(img.Version))
+}
+
+// MergeVersionString renders dwMergeVersion.
+func (img *LoaderImage) MergeVersionString() string {
+	return fmt.Sprintf("%d.%d.%d", byte(img.MergeVersion>>24), byte(img.MergeVersion>>16), uint16(img.MergeVersion))
+}
+
+// ChipName is the supportChip field as a model name: "RK3588" for 0x33353838.
+// Anything the tag decoder cannot read comes back as "0x…".
+func (img *LoaderImage) ChipName() string {
+	if img == nil {
+		return ""
+	}
+	name := chipTagString(img.ChipType)
+	if name == "?" {
+		return fmt.Sprintf("0x%08X", img.ChipType)
+	}
+	if len(name) == 4 && isASCIIDigits(name) {
+		return "RK" + name
+	}
+	return name
+}
+
+func isASCIIDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// SupportsChip reports whether this loader was built for the given chip model
+// ("RK3588", "3588", "rk3588s" all compare equal). It is false when either side
+// does not name a chip, so callers must treat "unknown" separately.
+func (img *LoaderImage) SupportsChip(name string) bool {
+	if img == nil || img.ChipType == 0 {
+		return false
+	}
+	want, got := chipDigits(name), chipDigits(chipTagString(img.ChipType))
+	return want != "" && got != "" && want == got
+}
+
+// CheckChip compares the loader's supportChip with the image's chip name.
+//
+// This is the check upstream's download_boot() does not have: it trusts the
+// loader header (`dev.emDeviceType = pBoot->SupportDevice`) and sends whatever
+// it was given. On real hardware a mismatched loader is transmitted in full and
+// then rejected by the BootROM at index 0, which looks exactly like a USB
+// fault. Refusing before the first control transfer turns that into a message.
+func (img *LoaderImage) CheckChip(want string) error {
+	if img == nil {
+		return loaderErrf(LoaderEmpty, "no loader image")
+	}
+	if want == "" || img.ChipType == 0 {
+		// Nothing to compare: the caller falls back to the parse-time
+		// RK3588 check only, and says so in the report.
+		return nil
+	}
+	if !img.SupportsChip(want) {
+		return loaderErrf(LoaderChipMismatch,
+			"loader is built for %s (supportChip=0x%08X) but the image is for %s; refusing Download Boot before the first transfer",
+			img.ChipName(), img.ChipType, want)
+	}
+	return nil
+}
+
+// chipDigits normalises "RK3588", "rk3588s" and "3588" to "3588", matching the
+// 16-byte READ_CHIP_INFO string against the four ASCII digits of a chip tag.
+func chipDigits(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= '0' && c <= '9' {
+			out = append(out, c)
+		} else if len(out) > 0 {
+			break
+		}
+	}
+	return string(out)
 }
 
 // LoaderErrorKind classifies why a loader file was rejected. The UI turns this
@@ -161,6 +281,14 @@ func ParseLoaderImage(data []byte) (*LoaderImage, error) {
 
 	img.Version = binary.LittleEndian.Uint32(data[6:10])
 	img.MergeVersion = binary.LittleEndian.Uint32(data[10:14])
+	img.BuildTime = LoaderTime{
+		Year:   binary.LittleEndian.Uint16(data[14:16]),
+		Month:  data[16],
+		Day:    data[17],
+		Hour:   data[18],
+		Minute: data[19],
+		Second: data[20],
+	}
 	img.ChipType = binary.LittleEndian.Uint32(data[21:25])
 	img.SignFlag = data[43]
 	img.RC4Flag = data[44]
@@ -292,8 +420,10 @@ type DBSegment struct {
 // Summary is the human-readable description the UI shows after a file pick.
 func (img *LoaderImage) Summary() []string {
 	lines := []string{
-		fmt.Sprintf("Loader: tag=%s version=0x%08X merge=0x%08X chip=0x%08X (%s) size=%d B",
-			img.TagName, img.Version, img.MergeVersion, img.ChipType, chipTagString(img.ChipType), img.Size),
+		fmt.Sprintf("Loader: tag=%s version=%s (0x%08X) merge=%s chip=0x%08X (%s) size=%d B",
+			img.TagName, img.VersionString(), img.Version, img.MergeVersionString(),
+			img.ChipType, img.ChipName(), img.Size),
+		fmt.Sprintf("Build time: %s", img.BuildTime.String()),
 		fmt.Sprintf("CRC-32: 0x%08X (verified)", img.CRCStored),
 	}
 	for _, seg := range img.Plan() {
@@ -407,9 +537,40 @@ type DBError struct {
 	Detail   string      `json:"detail"`
 	Request  uint16      `json:"request,omitempty"`
 	Entry    int         `json:"entry"`
-	Offset   int         `json:"offset"`
-	Packet   int         `json:"packet"`
-	Err      error       `json:"-"`
+	// Index is the ordinal of the loader FILE's data block that failed, in
+	// the order DownloadBoot transmits them (all 0x0471 blocks, then all
+	// 0x0472). Index 0 is the first block of the loader, which is what
+	// upgrade_tool's log calls index(0) — data already reached the device and
+	// the BootROM refused it, not "the USB request never left the host".
+	Index      int    `json:"index"`
+	FirstBlock bool   `json:"firstBlock"`
+	BlockName  string `json:"blockName,omitempty"`
+	Offset     int    `json:"offset"`
+	Packet     int    `json:"packet"`
+	Err        error  `json:"-"`
+}
+
+// Category is the machine-readable split the page and the report show:
+// "first-block" (BootROM rejected the first data block), "mid-transfer"
+// (a later block/packet failed), or one of the local loader/mode failures.
+func (e *DBError) Category() string {
+	if e == nil {
+		return ""
+	}
+	switch e.Kind {
+	case DBBootromRejected:
+		return "first-block"
+	case DBTransferFailed:
+		return "mid-transfer"
+	case DBNotMaskrom:
+		return "not-maskrom"
+	case DBLoaderInvalid:
+		return "loader-invalid"
+	case DBLoaderChipMismatch:
+		return "loader-chip-mismatch"
+	default:
+		return "unknown"
+	}
 }
 
 func (e *DBError) Error() string {
@@ -419,21 +580,34 @@ func (e *DBError) Error() string {
 func (e *DBError) Unwrap() error { return e.Err }
 
 // Hint is the one-line next step shown to the user.
+//
+// The wording follows the measured behaviour, not the older guess: index(0)
+// is the first data block of the loader, so a rejection there means the bytes
+// were delivered and the BootROM refused them. On this board that was a loader
+// taken from the wrong image (SDK v1.06.111 with the official v23 image), and
+// the same loader from the image's own RKFW header worked with the vendor tool.
 func (e *DBError) Hint() string {
 	switch e.Kind {
 	case DBNotMaskrom:
 		return "设备不在 maskrom：Download Boot 只能在裸 maskrom 下执行；loader 态直接做 cd/sd/只读信息。"
 	case DBBootromRejected:
-		return "BootROM 拒绝了首包（0x0471 index 0）。先确认设备确为 maskrom（bcdUSB bit0=0），再确认 loader 与芯片匹配；不是 USB 线或浏览器的问题。"
+		return "BootROM 拒收了 loader 的第 0 个数据块（index 0）：数据已经发到设备，是 BootROM 主动拒收，不是 USB 线或浏览器的问题。按顺序排查：① loader 必须是这份镜像自带的那个（SDK v1.06.111 + 官方 v23 镜像就是真实错配）；② 必须是一个干净的上电周期——拔线重插刚进 maskrom，之前没有发过任何 CBW；③ 最后才怀疑线材。"
 	case DBTransferFailed:
-		return "首包之后的数据传输失败：loader 文件可能被截断，或设备中途掉出总线；重新进 maskrom 后再试。"
+		return fmt.Sprintf("loader 的第 %d 个数据块（%s）传输中断：首块已经被接受，说明 loader 与芯片这一段是通的。常见原因是线材/供电在中途掉线，或 loader 文件被截断；重新进 maskrom 后整份重发（不能从中间续传）。", e.Index, orUnknown(e.BlockName))
 	case DBLoaderInvalid:
-		return "loader 文件无法解析（RKBOOT tag / CRC-32 / 段表越界）：确认选的是 rk3588_spl_loader_*.bin，而不是解压失败的半截文件。"
+		return "loader 文件无法解析（RKBOOT tag / CRC-32 / 段表越界）：确认选的是镜像自带的 RKBOOT，而不是解压失败的半截文件。"
 	case DBLoaderChipMismatch:
 		return "loader 是为其他芯片构建的：RK3588 需要 chip=0x33353838（\"3588\"）的 loader。"
 	default:
 		return ""
 	}
+}
+
+func orUnknown(s string) string {
+	if s == "" {
+		return "unnamed"
+	}
+	return s
 }
 
 // AsDBError narrows a DownloadBoot failure to its classified form.
@@ -533,7 +707,7 @@ func (s *Session) DownloadBoot(img *LoaderImage, opts DBOptions) (*DBReport, err
 		for packetIndex, packet := range vplan.Packets {
 			ok := s.vendorOut(vplan.Request, packet, &DBErrorContext{
 				request: vplan.Request, entry: segmentIndex, packet: packetIndex, offset: offset,
-				firstPacket: segmentIndex == 0 && packetIndex == 0,
+				name: seg.Entry.Name, firstPacket: segmentIndex == 0 && packetIndex == 0,
 			})
 			if ok != nil {
 				return nil, ok
@@ -550,6 +724,7 @@ func (s *Session) DownloadBoot(img *LoaderImage, opts DBOptions) (*DBReport, err
 		if vplan.PendingZeroWrite {
 			if dbErr := s.vendorOutPendingZero(vplan.Request, &DBErrorContext{
 				request: vplan.Request, entry: segmentIndex, packet: len(vplan.Packets), offset: offset,
+				name: seg.Entry.Name,
 			}); dbErr != nil {
 				return nil, dbErr
 			}
@@ -574,6 +749,7 @@ type DBErrorContext struct {
 	entry       int
 	packet      int
 	offset      int
+	name        string
 	firstPacket bool
 }
 
@@ -631,17 +807,24 @@ func classifyDBError(err error, ctx *DBErrorContext, length int, transportErr bo
 		code = ErrTimeout
 	}
 	kind := DBTransferFailed
-	detail := fmt.Sprintf("vendor request 0x%04X entry %d packet %d (offset %d, %d bytes): %v",
-		ctx.request, ctx.entry, ctx.packet, ctx.offset, length, err)
+	detail := fmt.Sprintf("vendor request 0x%04X index %d (%s) packet %d (offset %d, %d bytes): %v",
+		ctx.request, ctx.entry, orUnknown(ctx.name), ctx.packet, ctx.offset, length, err)
+	firstBlock := ctx.entry == 0
 	if ctx.firstPacket && transportErr {
-		// The stage-2 hardware finding: a bare maskrom refuses the very
-		// first packet with a USB transfer error. A short write instead
-		// means the device took the packet and stopped, which is a different
-		// problem and must not be reported as "BootROM rejected".
+		// The stage-2/3 hardware finding, corrected: index(0) is the first
+		// DATA BLOCK of the loader file, not "the first USB request". The
+		// bytes reached the device and the BootROM refused them — a wrong
+		// loader (or a dirty power-on cycle) looks exactly like this, while a
+		// cable fault would show up later in the transfer.
 		kind = DBBootromRejected
-		detail = fmt.Sprintf("BootROM rejected the first packet of 0x0471 entry0 (offset 0, %d bytes): %v", length, err)
+		detail = fmt.Sprintf("BootROM rejected the first data block of the loader (index 0, %s, offset 0, %d bytes): %v",
+			orUnknown(ctx.name), length, err)
 	}
-	return &DBError{Kind: kind, Code: code, CodeName: code.String(), Request: ctx.request, Entry: ctx.entry, Packet: ctx.packet, Offset: ctx.offset, Err: err, Detail: detail}
+	return &DBError{
+		Kind: kind, Code: code, CodeName: code.String(),
+		Request: ctx.request, Entry: ctx.entry, Index: ctx.entry, FirstBlock: firstBlock,
+		BlockName: ctx.name, Packet: ctx.packet, Offset: ctx.offset, Err: err, Detail: detail,
+	}
 }
 
 func statusFor(err error, complete bool) string {

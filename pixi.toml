@@ -17,8 +17,8 @@ wasm = "node tools/build-wasm.mjs"
 dev = { cmd = "node tools/serve.mjs web 5173", depends-on = ["gen", "wasm"] }
 # Everything CI needs: generated JS is current, Go compiles+vet (host + wasm),
 # JS parses.
-build = { cmd = "go run ./cmd/genprotocol -check && go build ./... && go vet ./... && node --check web/app/protocol.js && node --check web/app/bridge.js && node --check web/app/mock-host.js && node --check web/app/mock-loader.js && node --check web/app/usb-host.js && node --check web/app/worker.js && node --check web/app/app.js && node --check web/probe/protocol.js && node --check web/probe/rockusb.js && node --check web/probe/probe.js && node --check tools/serve.mjs && node --check tools/build-wasm.mjs", depends-on = ["gen", "wasm"] }
-test = { cmd = "go test ./... && node --test web/probe/rockusb.test.mjs web/probe/probe.test.mjs web/app/test/bridge.test.mjs web/app/test/mock-host.test.mjs web/app/test/usb-host.test.mjs web/app/test/core.test.mjs web/app/test/worker.test.mjs", depends-on = ["wasm"] }
+build = { cmd = "go run ./cmd/genprotocol -check && go build ./... && go vet ./... && node --check web/app/protocol.js && node --check web/app/bridge.js && node --check web/app/mock-host.js && node --check web/app/mock-loader.js && node --check web/app/usb-host.js && node --check web/app/worker.js && node --check web/app/preflight.js && node --check web/app/app.js && node --check web/probe/protocol.js && node --check web/probe/rockusb.js && node --check web/probe/probe.js && node --check tools/serve.mjs && node --check tools/build-wasm.mjs", depends-on = ["gen", "wasm"] }
+test = { cmd = "go test ./... && node --test web/probe/rockusb.test.mjs web/probe/probe.test.mjs web/app/test/bridge.test.mjs web/app/test/mock-host.test.mjs web/app/test/usb-host.test.mjs web/app/test/core.test.mjs web/app/test/worker.test.mjs web/app/test/preflight.test.mjs web/app/test/uf.test.mjs", depends-on = ["wasm"] }
 fmt = "go fmt ./..."
 # M2: offline image plan, e.g. `pixi run uf --dry-run update.img`. Never opens
 # a USB device and never writes flash.

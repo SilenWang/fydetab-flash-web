@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/SilenWang/rk3588-webflasher/internal/rkcrc"
 )
@@ -42,11 +41,7 @@ func (img *Image) VerifyRKAFCRC() (CRCResult, error) {
 		return res, fmt.Errorf("rkfw: RKAF length %d is too small to hold a CRC trailer", img.RKAFLength)
 	}
 
-	f, err := os.Open(img.Path)
-	if err != nil {
-		return res, fmt.Errorf("rkfw: open %s: %w", img.Path, err)
-	}
-	defer f.Close()
+	f := img.ReaderAt()
 
 	var tail [4]byte
 	if err := readAtFull(f, tail[:], img.RKAFOffset+bodyLen); err != nil {
@@ -86,11 +81,7 @@ func (img *Image) VerifyMD5() (MD5Result, error) {
 	res.Present = true
 
 	imageEnd := img.RKAFOffset + img.RKAFLength
-	f, err := os.Open(img.Path)
-	if err != nil {
-		return res, fmt.Errorf("rkfw: open %s: %w", img.Path, err)
-	}
-	defer f.Close()
+	f := img.ReaderAt()
 
 	type candidate struct {
 		offset int64

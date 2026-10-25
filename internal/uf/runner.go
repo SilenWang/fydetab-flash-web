@@ -2,6 +2,8 @@ package uf
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -41,18 +43,24 @@ type Source interface {
 // Report is the JSON-friendly outcome of one run. It is returned even when the
 // run fails, so a caller can log how far it got and where to resume.
 type Report struct {
-	Schema       string        `json:"schema"`
-	Image        string        `json:"image"`
-	StartedAt    time.Time     `json:"startedAt"`
-	FinishedAt   time.Time     `json:"finishedAt"`
-	DurationMs   float64       `json:"durationMs"`
-	OK           bool          `json:"ok"`
-	Cancelled    bool          `json:"cancelled,omitempty"`
-	Phases       []PhaseReport `json:"phases"`
-	Items        []ItemReport  `json:"items"`
-	IDB          *IDBReport    `json:"idb,omitempty"`
-	Erase        *EraseReport  `json:"erase,omitempty"`
-	Device       DeviceReport  `json:"device"`
+	Schema     string        `json:"schema"`
+	Image      string        `json:"image"`
+	StartedAt  time.Time     `json:"startedAt"`
+	FinishedAt time.Time     `json:"finishedAt"`
+	DurationMs float64       `json:"durationMs"`
+	OK         bool          `json:"ok"`
+	Cancelled  bool          `json:"cancelled,omitempty"`
+	Phases     []PhaseReport `json:"phases"`
+	Items      []ItemReport  `json:"items"`
+	IDB        *IDBReport    `json:"idb,omitempty"`
+	Erase      *EraseReport  `json:"erase,omitempty"`
+	Device     DeviceReport  `json:"device"`
+	// Loader is the Download Boot blob's identity (source, sha256, build
+	// date, chip check), recorded whether or not the device needed it.
+	Loader *LoaderReport `json:"loader,omitempty"`
+	// DB is set when Download Boot failed: the first-block/mid-transfer split
+	// the operator needs, with the loader block index the BootROM rejected.
+	DB           *DBFailReport `json:"dbFailure,omitempty"`
 	Reset        bool          `json:"reset"`
 	BytesWritten int64         `json:"bytesWritten"`
 	BytesErased  int64         `json:"bytesErased"`
@@ -121,22 +129,59 @@ type DeviceReport struct {
 	ReenumAttempts int               `json:"reenumAttempts,omitempty"`
 }
 
+// LoaderReport is the identity of the loader a Download Boot would send, so a
+// failed attempt can be compared with a known-good file after the fact. The
+// build date is the field that separates the official v23 loader (2024-09-06)
+// from the SDK's v1.06.111 (2022-06-28).
+type LoaderReport struct {
+	Source       string `json:"source"` // image | file
+	Name         string `json:"name,omitempty"`
+	Offset       int64  `json:"offset,omitempty"`
+	Length       int64  `json:"length"`
+	SHA256       string `json:"sha256,omitempty"`
+	Version      string `json:"version,omitempty"`
+	BuildTime    string `json:"buildTime,omitempty"`
+	Chip         string `json:"chip,omitempty"`
+	ChipExpected string `json:"chipExpected,omitempty"`
+	// ChipCheck is ok | mismatch | unknown, the same vocabulary imageplan and
+	// the page use.
+	ChipCheck string `json:"chipCheck"`
+	// NonImage marks a loader the user picked instead of the image's own.
+	NonImage bool   `json:"nonImage,omitempty"`
+	Checked  string `json:"checked,omitempty"`
+}
+
+// DBFailReport is the Download Boot failure split the operator sees:
+// "first-block" means the BootROM received the loader's first data block and
+// refused it (loader/image mismatch or a dirty power-on cycle, in that order),
+// "mid-transfer" means the first block was accepted and a later one failed.
+type DBFailReport struct {
+	Category  string `json:"category"`
+	Index     int    `json:"index"`
+	BlockName string `json:"blockName,omitempty"`
+	Detail    string `json:"detail"`
+}
+
 // RunError is a failed run with the recovery information the UI needs: which
 // item to resume from and what to tell the user.
 type RunError struct {
-	Code      rockusb.ErrorCode `json:"code"`
-	CodeName  string            `json:"codeName"`
-	Phase     string            `json:"phase"`
-	Item      string            `json:"item,omitempty"`
-	Op        int               `json:"op,omitempty"`
-	LBA       uint32            `json:"lba,omitempty"`
-	Sectors   int               `json:"sectors,omitempty"`
-	Attempt   int               `json:"attempt,omitempty"`
-	Detail    string            `json:"detail"`
-	Hint      string            `json:"hint,omitempty"`
-	Completed []string          `json:"completedItems,omitempty"`
-	NextItem  string            `json:"nextItem,omitempty"`
-	Err       error             `json:"-"`
+	Code     rockusb.ErrorCode `json:"code"`
+	CodeName string            `json:"codeName"`
+	Phase    string            `json:"phase"`
+	Item     string            `json:"item,omitempty"`
+	// Category is the coarse classification the page switches on, e.g.
+	// "first-block" / "mid-transfer" for a Download Boot failure or
+	// "loader-chip-mismatch" when the loader was refused before transfer.
+	Category  string   `json:"category,omitempty"`
+	Op        int      `json:"op,omitempty"`
+	LBA       uint32   `json:"lba,omitempty"`
+	Sectors   int      `json:"sectors,omitempty"`
+	Attempt   int      `json:"attempt,omitempty"`
+	Detail    string   `json:"detail"`
+	Hint      string   `json:"hint,omitempty"`
+	Completed []string `json:"completedItems,omitempty"`
+	NextItem  string   `json:"nextItem,omitempty"`
+	Err       error    `json:"-"`
 }
 
 func (e *RunError) Error() string {
@@ -273,6 +318,11 @@ func Run(ctx context.Context, plan *Plan, src Source, conn Connector, opts Optio
 }
 
 func (r *runner) run(ctx context.Context) error {
+	// The loader check runs before the device is opened: a wrong loader must
+	// be refused without sending a single byte.
+	if err := r.checkLoaderPlan(); err != nil {
+		return err
+	}
 	if err := r.connect(ctx); err != nil {
 		return err
 	}
@@ -372,6 +422,93 @@ func (r *runner) closeDevice() {
 
 // --- pre-flight -------------------------------------------------------------
 
+// checkLoaderPlan loads the Download Boot blob and runs the check upstream's
+// download_boot() does not have: the loader's supportChip must match the
+// image's chip. It touches no device, so a mismatch is refused before the first
+// control transfer. On real hardware a mismatched loader is transmitted in full
+// and then rejected at index 0, which looks exactly like a cable/port fault —
+// that confusion is what this check exists to remove.
+func (r *runner) checkLoaderPlan() error {
+	lp := r.plan.Loader
+	if lp == nil {
+		return nil
+	}
+	data := lp.Bytes
+	if len(data) == 0 {
+		var err error
+		data, err = r.readAt(lp.FileOffset, lp.Length)
+		if err != nil {
+			rerr := r.fail(PhaseBoot, "", rockusb.ErrFailed,
+				fmt.Sprintf("读取镜像自带 loader 失败（offset 0x%x, %d B）: %v", lp.FileOffset, lp.Length, err),
+				"确认镜像文件完整可读；镜像被移动或截断时不能继续写入。", err)
+			rerr.Category = "loader-invalid"
+			return rerr
+		}
+	}
+	r.loader = data
+
+	parsed, err := rockusb.ParseLoaderImage(data)
+	if err != nil {
+		rerr := r.fail(PhaseBoot, "", rockusb.ErrDeviceNotSupport,
+			fmt.Sprintf("loader 无法解析: %v", err),
+			"确认镜像里的 RKFW loader 是完整的 RKBOOT；镜像损坏时不要继续写入。", err)
+		rerr.Category = "loader-invalid"
+		return rerr
+	}
+
+	source := lp.Source
+	if source == "" {
+		source = "image"
+	}
+	report := &LoaderReport{
+		Source:       source,
+		Name:         lp.Name,
+		Offset:       lp.FileOffset,
+		Length:       int64(len(data)),
+		SHA256:       lp.SHA256,
+		Version:      parsed.VersionString(),
+		BuildTime:    parsed.BuildTime.String(),
+		Chip:         parsed.ChipName(),
+		ChipExpected: r.plan.Chip,
+		ChipCheck:    "unknown",
+		NonImage:     lp.NonImage || source != "image",
+	}
+	if report.SHA256 == "" {
+		sum := sha256.Sum256(data)
+		report.SHA256 = hex.EncodeToString(sum[:])
+	}
+
+	if r.plan.Chip != "" {
+		if err := parsed.CheckChip(r.plan.Chip); err != nil {
+			report.ChipCheck = "mismatch"
+			report.Checked = "refused before Download Boot"
+			r.rep.Loader = report
+			hint := "loader 必须与镜像来自同一份 update.img：镜像自带的 loader 在 RKFW 头的 loader offset 处，用它就不会错配。"
+			if report.NonImage {
+				hint = "当前用的是用户指定的 loader（非镜像自带）。改回“使用镜像自带 loader”再试；错配的 loader 会在 index 0 被 BootROM 拒收。"
+			}
+			rerr := r.fail(PhaseBoot, "", ErrLoaderMismatch, err.Error(), hint, err)
+			rerr.Category = "loader-chip-mismatch"
+			return rerr
+		}
+		report.ChipCheck = "ok"
+		report.Checked = fmt.Sprintf("supportChip %s matches image %s", report.Chip, r.plan.Chip)
+	} else {
+		report.Checked = "image has no chip field; only the RK3588 parse check applied"
+	}
+	r.rep.Loader = report
+	r.event(PhaseBoot, "info", "", fmt.Sprintf("loader 自检：%s · %d B · sha256 %s · 构建 %s · chip %s（%s）",
+		source, report.Length, shortSHA(report.SHA256), report.BuildTime, report.Chip, report.ChipCheck))
+	return nil
+}
+
+func shortSHA(s string) string {
+	if len(s) > 12 {
+		return s[:12] + "…"
+	}
+	return s
+}
+
 func (r *runner) bootIfNeeded(ctx context.Context) error {
 	if r.link.Mode != rockusb.ModeMaskrom {
 		if r.plan.Loader != nil {
@@ -386,11 +523,15 @@ func (r *runner) bootIfNeeded(ctx context.Context) error {
 	}
 
 	r.beginPhase(PhaseBoot, "Download Boot")
-	loader, err := r.readAt(r.plan.Loader.FileOffset, r.plan.Loader.Length)
-	if err != nil {
-		return r.fail(PhaseBoot, "", rockusb.ErrFailed, fmt.Sprintf("读取 loader 失败: %v", err), "确认镜像文件完整可读。", err)
+	loader := r.loader
+	if loader == nil {
+		var err error
+		loader, err = r.readAt(r.plan.Loader.FileOffset, r.plan.Loader.Length)
+		if err != nil {
+			return r.fail(PhaseBoot, "", rockusb.ErrFailed, fmt.Sprintf("读取 loader 失败: %v", err), "确认镜像文件完整可读。", err)
+		}
+		r.loader = loader
 	}
-	r.loader = loader
 	img, err := rockusb.ParseLoaderImage(loader)
 	if err != nil {
 		return r.fail(PhaseBoot, "", rockusb.ErrDeviceNotSupport, fmt.Sprintf("loader 无法解析: %v", err),
@@ -420,8 +561,22 @@ func (r *runner) bootIfNeeded(ctx context.Context) error {
 	if dbErr != nil {
 		code := rockusb.CodeOf(dbErr)
 		hint := "Download Boot 失败：确认设备是裸 maskrom、loader 与芯片匹配，然后重新进入 maskrom。"
-		if classified := rockusb.AsDBError(dbErr); classified != nil && classified.Hint() != "" {
-			hint = classified.Hint()
+		if classified := rockusb.AsDBError(dbErr); classified != nil {
+			if classified.Hint() != "" {
+				hint = classified.Hint()
+			}
+			// Split the two hardware-observed failures: the BootROM refusing
+			// the loader's first data block (index 0) is a loader/power-cycle
+			// problem, while a later failure is a transport problem.
+			r.rep.DB = &DBFailReport{
+				Category:  classified.Category(),
+				Index:     classified.Index,
+				BlockName: classified.BlockName,
+				Detail:    classified.Detail,
+			}
+			rerr := r.fail(PhaseBoot, "", code, dbErr.Error(), hint, dbErr)
+			rerr.Category = classified.Category()
+			return rerr
 		}
 		return r.fail(PhaseBoot, "", code, dbErr.Error(), hint, dbErr)
 	}
