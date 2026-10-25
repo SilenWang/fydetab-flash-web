@@ -16,7 +16,7 @@
 // the page and the worker — the service worker only answers GETs for its own
 // origin.
 
-const VERSION = 'rk3588-webflasher-m4-1';
+const VERSION = 'rk3588-webflasher-m4b-1';
 const CACHE = `rk3588-webflasher-${VERSION}`;
 
 // Everything the app cannot run without. Kept in one place so the pwa test can
@@ -36,6 +36,11 @@ const PRECACHE = [
   './protocol.js',
   './zip.js',
   './zip-source.js',
+  './images.js',
+  './images.json',
+  './devices.js',
+  './logs.js',
+  './verify.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',

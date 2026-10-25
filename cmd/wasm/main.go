@@ -41,6 +41,9 @@ func main() {
 	set("ufPlan", js.FuncOf(ufPlan))
 	set("ufRun", js.FuncOf(ufRun))
 	set("ufCancel", js.FuncOf(ufCancel))
+	// M4b: structure + checksum verification with progress, so the page can
+	// say what it checked and how long it took instead of guessing.
+	set("ufVerify", js.FuncOf(ufVerify))
 	set("imageLoader", js.FuncOf(imageLoader))
 	set("demoImage", js.FuncOf(demoImage))
 	set("close", js.FuncOf(closeDevice))

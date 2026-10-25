@@ -4,11 +4,13 @@
 
 **当前阶段：M1（Go/WASM 核心 + WebUSB bridge + `ld`/`cd`/`sd` + Download Boot + 只读信息）、
 M2（离线 `uf --dry-run` 计划）、M3a（写入层 + `uf` 状态机，mock/回放验证）、M3b（WebUSB 写入绑定 +
-真机前自检），以及 M4（可安装 PWA + 离线 + 官方 `.zip` 直读）。**
+真机前自检）、M4（可安装 PWA + 离线 + 官方 `.zip` 直读），以及 M4b（五区块单页：镜像下载 / 校验 /
+设备列表 / 刷写 / 日志）。**
 M3b 之后浏览器里已经有一条完整的写入路径：从 `update.img` 的 RKFW 头里切出**镜像自带的 loader** 做
 Download Boot，再用 `internal/uf` 的同一套状态机执行 `gpt → wl → rd`；写入前必须通过页面的逐项自检。
 M4 把这一页变成可以装到桌面、断网也能打开的应用，并且允许直接选择官方 `.zip`（ZIP64 + 流式 deflate，
-不落地 3.8 GiB）。真机端到端由后续 stage 负责，本阶段的目标是让第一次真机尝试尽量一次成功。
+不落地 3.8 GiB）。M4b 把杂乱的调试面板收成一条普通用户能看懂的主流程：**下载或选镜像 → 校验 → 选设备 →
+刷写 → 看日志**，原来的 trace/命令/只读信息进“高级 / 诊断”折叠区。真机端到端由后续 stage 负责。
 
 > 为什么 maskrom 下读不到信息：裸 maskrom 不接受 rockusb 的 bulk CBW，5 条只读命令的 31 字节 CBW 全部被
 > STALL（M0b 真机实测，见 `internal/rockusb/testdata/maskrom-cbw-stall.json`）。所以**上电后的第一条命令必须
@@ -57,8 +59,11 @@ main thread (app.js)                        worker (worker.js)
 - `internal/uf/`：写入状态机、IDB 模型、mock/replay 传输，以及把 `device.Bridge` 接进状态机的
   `BridgeConnector`（WebUSB 绑定）。
 - `cmd/wasm/`：`syscall/js` 导出（`bindBridge` / `exec` / `inspectLoader` / `ufPlan` / `ufRun` /
-  `ufCancel` / `imageLoader` / `demoImage` / `close`）与 JS bridge 传输。
-- `web/app/`：页面（主线程 WebUSB host、module worker、mock 设备、逐项自检、写入面板）。
+  `ufCancel` / `ufVerify` / `imageLoader` / `demoImage` / `close`）与 JS bridge 传输。`ufVerify` 是 M4b
+  新增的：结构报告 + PARM CRC + 可选 RKAF CRC / 整镜像 MD5，并在读取器上挂进度回调。
+- `web/app/`：页面（五区块单流程 + 高级/诊断折叠区）。主线程 WebUSB host、module worker、mock 设备、
+  `preflight.js` 门禁、`images.js` 镜像清单与流式下载、`verify.js` 校验结论、`devices.js` 设备列表、
+  `logs.js` 日志仓库。
 - `web/probe/`：M0 只读探针，保留下来用于抓 trace 与对照，不受后续阶段影响。
 - `cmd/genprotocol/`：把 Go 的命令表/常量生成到 `web/app/protocol.js` 与 `web/probe/protocol.js`。
 
@@ -79,8 +84,9 @@ main thread (app.js)                        worker (worker.js)
 | `info [chip\|flash\|cap\|storage]` | 读只读信息（仅 LOADER；在 MASKROM 下打开设备前就拒绝） |
 | `help` / `version` | 帮助 / 核心版本 |
 
-页面上的写入路径（`ufPlan` / `ufRun`）不在 shell 命令表里：它是 `internal/uf` 的状态机，写入前必须通过
-自检清单，第一步就是 `db`。
+页面上的写入路径（`ufPlan` / `ufRun`）不在 shell 命令表里：它是 `internal/uf` 的状态机。页面的门禁在
+`web/app/preflight.js`：设备模式、loader 与镜像 chip 匹配、计划与 parameter 一致且未覆盖尾部已显式选择、
+上电后第一条命令是 `db`，以及 M4b 新增的“镜像已校验”。任何一条不满足，写入按钮都会禁用并写明缺什么。
 
 `db` 的失败会区分 **BootROM 拒收 loader 的第 0 个数据块（index 0）**、**第 0 块之后的传输失败**、
 **loader 文件无效**、**loader 芯片不匹配**、**设备不在 maskrom**——不会只报一个 `-1`。`index(0)` 是 loader
@@ -106,26 +112,28 @@ pixi run icons  # 重新生成 PWA 图标
 ### 真实设备
 
 1. 平板进 **MASKROM**（按住恢复键上电或按板子说明短接），USB 接入。**这一轮上电后不要先点任何读取按钮。**
-2. 打开 `http://localhost:5173/app/`，点 **授权设备**，选 `0x2207` 设备；`ld` 应显示 `Mode=Maskrom`。
-3. 点 **选择 update.img**。页面会读 RKFW 头、从镜像里切出 loader，显示它的 sha256、长度、LDR 构建日期与
-   chip 比对结果；**默认就用镜像自带的 loader**，不需要另外找文件。需要时可以用“改用本地 loader…”覆盖，
-   但页面会把它标成“非镜像自带”。
-4. 点 **生成写入计划**：写入项、目标 LBA、总传输量、未覆盖尾部（例如 STATE 的 4 GiB）都会列出来。
-   未覆盖尾部必须在下拉框里显式选择 `none / fill / erase-lba` 并打勾。
-5. 看 **真机前自检** 四项是否全绿（maskrom、loader 与镜像 chip 匹配、计划与 parameter 一致且尾部已选择、
-   第一条命令是 `db`）。全绿后 **开始写入** 才可点。
-6. 点 **开始写入**：状态机自己执行 `db → gpt(IDB + 分区表 + parameter) → wl … → rd`。成功后设备复位并重新枚举；再点一次
-   **授权设备**，`ld` 应为 `Mode=Loader`。
+2. 打开 `http://localhost:5173/app/`，第 3 块点 **添加设备**，选 `0x2207` 设备；列表会显示
+   `Maskrom · DevNo=1`（模式按 `bcdUSB` bit0 判定）。
+3. 第 1 块选镜像：官方条目点“下载”（清单里有直链时）或 **选择本地镜像**。页面读 RKFW 头、切出镜像自带的
+   loader，显示 sha256、长度、LDR 构建日期与 chip 比对结果。
+4. 第 2 块自动校验：结构 + PARM CRC 秒级出结论，整镜像 MD5 + RKAF CRC 按本机实测速度决定是否默认做完整
+   校验（页面会显示“预计约 X 秒”；超过 2 分钟就默认快速校验并明说“未做完整校验”）。
+5. 第 4 块看前置条件：未覆盖尾部必须在下拉框里显式选择 `none / fill / erase-lba` 并打勾；其余条件和
+   “缺什么”都逐条列出。全绿后 **开始刷写** 才可点。
+6. 点 **开始刷写**：状态机自己执行 `db → gpt(IDB + 分区表 + parameter 8 份) → wl … → rd`，界面显示阶段、百分比、速度、已用/剩余时间，
+   可取消；失败会给下一步（重试 / 重进 maskrom / 换线换口 / 导出日志）。成功后设备复位并重新枚举，第 3 块
+   刷新后应显示 `Loader`。
+7. 第 5 块随时有日志：分级、带时间戳，可导出文本或 NDJSON。
 
 > loader 由镜像提供，仓库不分发 Rockchip loader blob，也不联网获取。手动指定 loader 的文件只在本机内存里使用。
 
 ### 无设备演示
 
-勾选 **演示模式（mock 设备）**：
+勾选第 3 块的 **演示模式（mock 设备）**：
 
-- mock 设备一开始是 maskrom，`info` 会被拒绝（和真机一致）；
-- 自动载入一个**合成的** RKBOOT（段大小与真机 loader 相同，内容是填充字节，见 `web/app/mock-loader.js`）；
-- `db` 走完整的分包/CRC 路径 → mock 变 LOADER → `ld` 显示 `Mode=Loader` → `info` 返回 3588 / eMMC 等。
+- 自动载入合成镜像与它的 loader，自动生成计划并跑完整校验（校验路径与真机镜像完全相同）；
+- mock 设备一开始是 maskrom；`开始刷写` 会走完整的分包/CRC + `db → gpt → wl → rd` 路径，不访问 USB；
+- 高级 / 诊断里的 `info` 只有在 mock 变成 LOADER 之后才可用（和真机一致）。
 
 ## 只读守卫与写入边界
 
@@ -339,7 +347,7 @@ M4 只改页面与工具链，`internal/` 的写入语义与 `web/app/preflight.
 另一条线做真机验证）。
 
 - **可安装 PWA**：`web/app/manifest.webmanifest` + `web/app/sw.js`。service worker 在 `install` 时预缓存
-  页面、全部 JS 模块、图标与 `wasm/rk3588.wasm`（19 项），策略是 **cache-first**；`activate` 清掉旧版本
+  页面、全部 JS 模块、镜像清单、图标与 `wasm/rk3588.wasm`（24 项），策略是 **cache-first**；`activate` 清掉旧版本
   cache，页面发现等待中的 worker 时提示“刷新页面”。装成应用后**断网仍可打开**，写入能力与是否安装无关。
 - **官方 `.zip` 直读**：`web/app/zip.js`（ZIP32/ZIP64 中央目录，只读文件尾几十 KiB）+ `web/app/zip-source.js`
   （把首字节为 `RKFW` 的条目包成与 `File` 相同的 `{name,size,read(offset,length)}`，用
@@ -350,6 +358,32 @@ M4 只改页面与工具链，`internal/` 的写入语义与 `web/app/preflight.
   zip 统计），与 CLI 的 `uf --log` 同形状。
 - **CI 与部署**：`.github/workflows/ci.yml` 跑 `pixi run build` + `pixi run test`（并校验图标可重现）；
   `.github/workflows/pages.yml` 构建 `web/` 并用 GitHub Pages 发布（相对路径 + `.nojekyll`，适配 `/<repo>/`）。
+
+## M4b：五区块单页（镜像 / 校验 / 设备 / 刷写 / 日志）
+
+M4b 只改页面、下载/校验的前端编排与一处**新增的** wasm 导出；`internal/` 未改动，`ufPlan` / `ufRun` /
+`ufCancel` 与写入状态机保持原样，`preflight.js` 的门禁条件一条没删、没有放宽（只新增一条“镜像已校验”）。
+
+- **1 镜像**：`web/app/images.json` 硬编码官方清单（版本 / 文件名 / 大小 / sha256 / URL）。下载前先探测
+  `Access-Control-Allow-Origin`，不允许就如实退化成“在新标签页打开下载”；允许则 `showSaveFilePicker` +
+  `getReader()` 逐块写盘（8 GiB 不进内存），显示进度 / 速度 / 剩余时间。也可以用 `showOpenFilePicker`
+  或文件输入框选本地 `.img` / `.zip`。**官方条目的直链目前为空**：仓库不分发厂商固件，也不猜第三方镜像站
+  地址，页面会如实显示“清单未提供直链”；自建镜像源时把 `url` 填上即可。`demo` 条目指向 `pixi run sample`
+  生成的演示包，用来完整演示下载流程。
+- **2 校验**：`cmd/wasm` 新增 `ufVerify`（复用 `rkfw` / `parameter` / `imageplan`，不改它们）：结构解析、
+  item 表边界、分区与未覆盖区间、PARM CRC 秒级出结论；RKAF CRC 与整镜像 MD5 分块流式扫描，按阶段上报
+  进度。页面先用 64 MiB 样本测速，外推整镜像耗时：≤ 2 分钟默认做完整校验，超过则默认快速校验并在界面与
+  日志里写明“未做完整校验”，完整 MD5 变成可勾选项。实测（Ryzen 7 5700X，8.36 GB 样本）原生 Go 764–886
+  MiB/s、Go/WASM 约 700 MiB/s，7.79 GiB 口径约 11 s，策略细节见 [`docs/m4b-ui.md`](docs/m4b-ui.md)。
+- **3 设备**：`web/app/devices.js` 用 `navigator.usb.getDevices()` + `connect`/`disconnect` 列出所有
+  `0x2207` 设备（序列号、模式 = `bcdUSB` bit0、VID:PID、bcdUSB、是否可刷），与 core 的 `ld` 视图按序列号
+  合并出 `DevNo`；`db` 后的重新枚举按序列号重新选中，匹配不上就要求重新授权/选择。
+- **4 刷写**：一个按钮；前置条件不满足时逐条写明缺什么。进度含阶段、百分比、速度、已用/剩余时间，可取消；
+  失败给出下一步（重试 / 重进 maskrom / 换线换口 / 导出日志）。
+- **5 日志**：`web/app/logs.js` 的分级日志（时间戳 + 来源 + 级别），可折叠、可导出文本或 NDJSON
+  （`application/x-ndjson`，含 header 与丢弃计数）。任何 `catch` 都落日志。
+- **高级 / 诊断**：原始传输记录、只读信息、命令 shell、loader 覆盖与 PWA 状态收进折叠区，不占主视图。
+  只读探针 `/probe/` 原样保留。
 - **驱动文档**：macOS arm64 / Linux / Windows 的 WebUSB 说明见
   [`docs/webusb-drivers.md`](docs/webusb-drivers.md)；Linux 的 udev 规则可直接装
   [`docs/99-rockchip-webusb.rules`](docs/99-rockchip-webusb.rules)。安装、离线验证与 zip 直读细节见
@@ -378,9 +412,14 @@ internal/device/            设备枚举与 shell（ld/desc/cd/sd/db/info）
 internal/imageplan/         唯一的镜像 planner + 镜像自带 loader 提取 + 演示镜像
 internal/uf/                写入状态机、IDB 模型、mock/回放、BridgeConnector、JSON 日志
 cmd/uf/                     uf --dry-run 计划 + --mock/--replay 写入状态机
-cmd/wasm/                   Go/WASM 核心导出（shell + ufPlan/ufRun/ufCancel/imageLoader/demoImage）
+cmd/wasm/                   Go/WASM 核心导出（shell + ufPlan/ufRun/ufCancel/ufVerify/imageLoader/demoImage）
 cmd/genprotocol/            生成 web/app/protocol.js 与 web/probe/protocol.js
-web/app/                    页面：主线程 WebUSB host、worker、mock 设备、preflight.js、写入面板
+web/app/                    页面：五区块单流程（镜像/校验/设备/刷写/日志）+ 高级诊断折叠区
+web/app/images.js           镜像清单解析、CORS 探测、流式下载（File System Access API）
+web/app/images.json         官方镜像清单（版本/文件名/大小/sha256/URL）
+web/app/verify.js           校验结论与阻断/警告规则、2 分钟预算
+web/app/devices.js          设备列表、模式判定与重新枚举匹配
+web/app/logs.js             分级日志仓库与 TXT/NDJSON 导出
 web/app/zip.js              ZIP32/ZIP64 中央目录解析（只读文件尾，不解压）
 web/app/zip-source.js       按需解压的 image source（DecompressionStream，8 MiB 回退窗口）
 web/app/sw.js               service worker：预缓存页面 + wasm，断网可开
@@ -400,6 +439,7 @@ docs/uf-write-path.md       写入命令、状态机、IDB/擦除假设、mock t
 docs/webusb-drivers.md      macOS arm64 / Linux / Windows 的 WebUSB 与驱动说明
 docs/99-rockchip-webusb.rules  Linux udev 规则
 docs/pwa-offline.md         安装、离线验证、zip 直读与日志导出
+docs/m4b-ui.md              五区块页面：下载/校验/设备/刷写/日志、CORS 与 2 分钟规则
 ```
 
 ## 协议来源与许可

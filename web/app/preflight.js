@@ -22,6 +22,7 @@ export const CHECK_MASKROM = 'maskrom';
 export const CHECK_LOADER = 'loader';
 export const CHECK_PLAN = 'plan';
 export const CHECK_FIRST_COMMAND = 'firstCommand';
+export const CHECK_IMAGE = 'imageVerified';
 
 /** currentDevice picks the DevNo the page has selected, or the only device. */
 export function currentDevice(devices, current) {
@@ -116,6 +117,9 @@ export function readOnlyGate({ device, dbDone }) {
  *   dbDone       a Download Boot succeeded and the device is LOADER
  *   runInProgress
  *   hasImage
+ *   verification  the verdict from verify.js ({level, status, allowsWrite,
+ *                 summary, full}); undefined/null means "not verified yet".
+ *                 A quick verdict is allowed to write, but the item says so.
  */
 export function evaluatePreflight(input = {}) {
   const device = currentDevice(input.devices, input.current);
@@ -123,8 +127,37 @@ export function evaluatePreflight(input = {}) {
   const loader = input.loader ?? null;
   const eraseConfirmed = Boolean(input.eraseConfirmed);
   const runInProgress = Boolean(input.runInProgress);
+  const verification = input.verification ?? null;
 
   const items = [];
+
+  // 0. The image has been verified (M4b). This is an added condition, not a
+  // replacement: a missing or failed verification keeps the write button off,
+  // and a quick verdict passes while saying it did not scan the whole file.
+  if (!verification || verification.status === 'none') {
+    items.push({
+      id: CHECK_IMAGE,
+      label: '镜像已校验（结构 + 校验和）',
+      status: 'pending',
+      detail: '还没有校验镜像：在第 2 块点“开始校验”，或重新选择镜像让它自动开始。',
+    });
+  } else if (verification.status === 'fail' || verification.status === 'failed') {
+    items.push({
+      id: CHECK_IMAGE,
+      label: '镜像已校验（结构 + 校验和）',
+      status: 'fail',
+      detail: `校验未通过：${verification.summary || '有结构性错误或校验和不匹配'}`,
+    });
+  } else {
+    items.push({
+      id: CHECK_IMAGE,
+      label: '镜像已校验（结构 + 校验和）',
+      status: 'pass',
+      detail: verification.full
+        ? `完整校验通过：${verification.summary || '结构与整镜像校验和一致'}`
+        : `快速校验通过：${verification.summary || '结构与 PARM CRC 通过'}——未做完整校验（整镜像 MD5 / RKAF CRC 未运行）。`,
+    });
+  }
 
   // 1. Device in maskrom (or already bootstrapped into LOADER).
   if (!device) {
@@ -216,7 +249,7 @@ export function evaluatePreflight(input = {}) {
       status: 'fail',
       detail: `计划 ${facts.items} 项、共 ${formatBytes(facts.totalBytes)}；${facts.uncoveredTails} 个分区尾部未覆盖（${formatBytes(
         facts.uncoveredBytes,
-      )}，含 ${facts.uncoveredParts || '?'}）——请在下面显式选择处置并打勾。`,
+      )}，含 ${facts.uncoveredPartitions ?? facts.uncoveredParts ?? '?'}）——请在下面显式选择处置并打勾。`,
     });
   } else {
     items.push({
@@ -225,7 +258,7 @@ export function evaluatePreflight(input = {}) {
       status: 'pass',
       detail: `计划 ${facts.items} 项、共 ${formatBytes(facts.totalBytes)}；未覆盖 ${formatBytes(
         facts.uncoveredBytes,
-      )}（${facts.uncoveredParts || '无'}）→ ${facts.eraseMode}${
+      )}（${facts.uncoveredPartitions ?? facts.uncoveredParts ?? '无'}）→ ${facts.eraseMode}${
         facts.uncoveredTails > 0 ? '（已确认）' : '（没有未覆盖区间）'
       }。`,
     });
@@ -272,7 +305,7 @@ export function evaluatePreflight(input = {}) {
     ready,
     blocking: blocking.map((i) => i.id),
     readOnly: readOnlyGate({ device, dbDone: Boolean(input.dbDone) }),
-    canWrite: ready && facts && facts.items > 0 && Boolean(loaderReady),
+    canWrite: ready && facts && facts.items > 0 && Boolean(loaderReady) && Boolean(verification?.allowsWrite),
     canDb: Boolean(device) && isMaskrom(device) && Boolean(loaderReady) && !runInProgress,
   };
 }
