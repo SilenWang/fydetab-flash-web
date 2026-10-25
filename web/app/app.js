@@ -69,6 +69,7 @@ function onWorkerMessage(event) {
     case 'ready':
       state.ready = true;
       setCoreBadge('ok', `core ${msg.version}`);
+      updateButtons();
       if (msg.mode !== state.mode) {
         worker.postMessage({ type: 'mode', mode: state.mode });
       }
@@ -460,6 +461,7 @@ async function pickLoader(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   state.loaderBytes = bytes;
   appendLine(`选择 loader：${file.name}（${bytes.byteLength} B）`, 'muted');
+  updateButtons();
   if (!state.ready) return;
   const id = ++rpcId;
   worker.postMessage({ type: 'inspect', id, bytes: bytes.buffer.slice(0) });
