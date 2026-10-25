@@ -21,6 +21,10 @@ type Op uint8
 const (
 	// OpTestUnitReady is reused by the state machine's "Test Device" phase.
 	OpTestUnitReady Op = 0x00
+	// OpReadLBA reads flash sectors: READ_LBA. It is a read command, but it
+	// carries an address and a length, so it lives here next to WRITE_LBA
+	// rather than in rockusb's address-free info-command table.
+	OpReadLBA Op = 0x14
 	// OpWriteLBA writes data to flash sectors: WRITE_LBA.
 	OpWriteLBA Op = 0x15
 	// OpEraseLBA erases flash sectors: ERASE_LBA.
@@ -35,6 +39,8 @@ func (o Op) Name() string {
 	switch o {
 	case OpTestUnitReady:
 		return "RKU_TestDeviceReady"
+	case OpReadLBA:
+		return "RKU_ReadLBA"
 	case OpWriteLBA:
 		return "RKU_WriteLBA"
 	case OpEraseLBA:
@@ -89,6 +95,20 @@ func EncodeCommandCBW(tag uint32, op Op, lba uint32, sectors uint16, dataLength 
 	b[13] = 0 // LUN
 
 	switch op {
+	case OpReadLBA:
+		if sectors == 0 {
+			return nil, fmt.Errorf("uf: READ_LBA needs at least one sector")
+		}
+		if sectors > MaxTransferSectors {
+			return nil, fmt.Errorf("uf: READ_LBA of %d sectors exceeds the %d-sector transfer limit", sectors, MaxTransferSectors)
+		}
+		if int64(dataLength) != int64(sectors)*SectorSize {
+			return nil, fmt.Errorf("uf: READ_LBA data length %d does not match %d sectors", dataLength, sectors)
+		}
+		b[12] = rockusb.DirectionIn
+		b[14] = 0x0a
+		b[16] = subCode
+		binary.LittleEndian.PutUint32(b[8:12], dataLength)
 	case OpWriteLBA:
 		if sectors == 0 {
 			return nil, fmt.Errorf("uf: WRITE_LBA needs at least one sector")
@@ -294,6 +314,90 @@ func (w *writer) EraseLBAs(ctx context.Context, lba uint32, sectors uint64) erro
 		}
 	}
 	return nil
+}
+
+// ReadLBAs reads flash sectors with READ_LBA, split into MaxTransferSectors
+// commands. The runner uses it to identify the IDB already on the device
+// before deciding whether to overwrite it.
+func (w *writer) ReadLBAs(ctx context.Context, lba uint32, sectors int) ([]byte, error) {
+	if sectors <= 0 {
+		return nil, fmt.Errorf("uf: read of %d sectors is empty", sectors)
+	}
+	if end := uint64(lba) + uint64(sectors); end > uint64(MaxLBA)+1 {
+		return nil, fmt.Errorf("uf: read at LBA 0x%x of %d sectors runs past the 32-bit LBA space", lba, sectors)
+	}
+	var out []byte
+	for done := 0; done < sectors; {
+		n := sectors - done
+		if n > MaxTransferSectors {
+			n = MaxTransferSectors
+		}
+		data, err := w.readChunk(ctx, lba+uint32(done), uint16(n))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, data...)
+		done += n
+	}
+	return out, nil
+}
+
+// readChunk runs one READ_LBA exchange, retrying only timeouts.
+func (w *writer) readChunk(ctx context.Context, lba uint32, sectors uint16) ([]byte, error) {
+	attempts := w.retries + 1
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		data, err := w.readExchange(ctx, lba, sectors, attempt)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if !isTimeout(err) || attempt == attempts {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func (w *writer) readExchange(ctx context.Context, lba uint32, sectors uint16, attempt int) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, w.errFor(OpReadLBA, "cancel", lba, sectors, attempt, err)
+	}
+	length := int(sectors) * SectorSize
+	cbw, err := EncodeCommandCBW(w.nextTag(), OpReadLBA, lba, sectors, uint32(length), methodImage)
+	if err != nil {
+		return nil, &Error{Code: rockusb.ErrDeviceNotSupport, CodeName: rockusb.ErrDeviceNotSupport.String(),
+			Op: OpReadLBA, OpName: OpReadLBA.Name(), Stage: "encode", LBA: lba, Sectors: int(sectors),
+			Attempt: attempt, Detail: err.Error(), Err: err}
+	}
+	tag := binary.LittleEndian.Uint32(cbw[4:8])
+
+	if err := w.bulkOut(ctx, OpReadLBA, "cbw", attempt, lba, sectors, cbw); err != nil {
+		return nil, err
+	}
+	data, err := w.bulkIn(ctx, OpReadLBA, "data", attempt, lba, sectors, length)
+	if err != nil {
+		return nil, err
+	}
+	cswBytes, err := w.bulkIn(ctx, OpReadLBA, "csw", attempt, lba, sectors, rockusb.CSWLength)
+	if err != nil {
+		return nil, err
+	}
+	csw, err := rockusb.DecodeCSW(cswBytes)
+	if err != nil {
+		return nil, &Error{Code: rockusb.ErrCmdNotMatch, CodeName: rockusb.ErrCmdNotMatch.String(),
+			Op: OpReadLBA, OpName: OpReadLBA.Name(), Stage: "csw", LBA: lba, Sectors: int(sectors),
+			Attempt: attempt, Detail: err.Error(), Err: err}
+	}
+	if code := csw.Validate(tag); code != rockusb.ErrSuccess {
+		return nil, &Error{Code: code, CodeName: code.String(),
+			Op: OpReadLBA, OpName: OpReadLBA.Name(), Stage: "csw", LBA: lba, Sectors: int(sectors),
+			Attempt: attempt, Detail: fmt.Sprintf("CSW tag=0x%08X status=0x%02X (want tag=0x%08X)", csw.Tag, csw.Status, tag)}
+	}
+	return data, nil
 }
 
 // Reset issues DEVICE_RESET (`rd`). The device drops off the bus afterwards.

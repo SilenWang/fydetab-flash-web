@@ -80,7 +80,10 @@ func (img *Image) VerifyMD5() (MD5Result, error) {
 	}
 	res.Present = true
 
-	imageEnd := img.RKAFOffset + img.RKAFLength
+	// The archive's physical end, which includes the hole the packer inserted
+	// past the 32-bit item table (see hole.go). Without it the "digest sits
+	// right after the archive" candidate would land inside the hole.
+	imageEnd := img.RKAFOffset + img.RKAFLength + img.DataHole
 	f := img.ReaderAt()
 
 	type candidate struct {

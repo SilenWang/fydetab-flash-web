@@ -116,3 +116,49 @@ func TestIDBModelUsesParsedRKBOOTWhenAvailable(t *testing.T) {
 		t.Fatalf("IDB length = %d, want align512(%d)", len(idb), len(loader))
 	}
 }
+
+// The device's IDB type decides whether anything may be written at LBA 64 at
+// all. SIL-515 had a New IDB ("RKNS") and this tool wrote an rk28-rc4 block
+// over it; the board then never booted.
+func TestIdentifyIDB(t *testing.T) {
+	rkns := make([]byte, IDBProbeSectors*SectorSize)
+	copy(rkns, "RKNS")
+	rk28 := make([]byte, IDBProbeSectors*SectorSize)
+	copy(rk28, "RK28")
+	garbage := make([]byte, IDBProbeSectors*SectorSize)
+	copy(garbage, "\xde\xad\xbe\xef")
+
+	cases := []struct {
+		name string
+		data []byte
+		want IDBType
+		ok   bool
+	}{
+		{"new idb", rkns, IDBTypeNew, true},
+		{"legacy idb", rk28, IDBTypeRK28, true},
+		{"all zero", make([]byte, IDBProbeSectors*SectorSize), IDBTypeEmpty, false},
+		{"garbage", garbage, IDBTypeUnknown, false},
+		{"too short", []byte{0}, IDBTypeEmpty, false},
+	}
+	for _, c := range cases {
+		got := IdentifyIDB(c.data)
+		if got.Type != c.want || got.Verified != c.ok {
+			t.Errorf("%s: IdentifyIDB = %+v, want type %s verified %t", c.name, got, c.want, c.ok)
+		}
+	}
+	if got := IdentifyIDB(rkns); got.Magic != "RKNS" || got.HeadHex[:8] != "524b4e53" {
+		t.Errorf("new IDB fingerprint = %+v", got)
+	}
+}
+
+func TestModelForType(t *testing.T) {
+	if m, err := ModelForType(IDBTypeRK28); err != nil || m.Name() != ModelRK28RC4 {
+		t.Fatalf("ModelForType(RK28) = %v, %v; want the rk28-rc4 model", m, err)
+	}
+	if _, err := ModelForType(IDBTypeNew); err == nil {
+		t.Fatal("ModelForType(RKNS) succeeded; this build has no verified RKNS writer")
+	}
+	if _, err := ModelForType(IDBTypeEmpty); err == nil {
+		t.Fatal("ModelForType(empty) succeeded; there is no type to rebuild")
+	}
+}

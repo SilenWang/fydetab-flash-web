@@ -12,6 +12,7 @@ import {
   readOnlyGate,
   isMaskrom,
   isLoader,
+  deviceMode,
   currentDevice,
   formatBytes,
   CHECK_MASKROM,
@@ -202,4 +203,38 @@ test('formatBytes matches the CLI units', () => {
   assert.equal(formatBytes(2 * 1024 * 1024), '2.00 MiB');
   assert.equal(formatBytes(4 * 1024 * 1024 * 1024), '4.00 GiB');
   assert.equal(formatBytes(-1), '?');
+});
+
+// The real `ld` reports a numeric media mode plus a label:
+//   { mode: 2, modeLabel: 'Loader' }
+// The page used to compare mode === 'LOADER', so on hardware every check failed
+// and the write button stayed grey even though the board was in Loader.
+test('numeric media modes from the real ld are understood', () => {
+  const numericLoader = { devNo: 2, vendorId: 0x2207, productId: 0x350b, bcdUSB: 0x0201, mode: 2, modeLabel: 'Loader' };
+  const numericMaskrom = { devNo: 1, vendorId: 0x2207, productId: 0x350b, bcdUSB: 0x0200, mode: 0, modeLabel: 'Maskrom' };
+
+  assert.equal(deviceMode(numericLoader), 'LOADER');
+  assert.equal(deviceMode(numericMaskrom), 'MASKROM');
+  assert.equal(deviceMode({ mode: 'loader', modeLabel: 'anything' }), 'LOADER');
+  assert.equal(deviceMode({ mode: 7, modeLabel: 'Loader' }), 'LOADER');
+  assert.equal(deviceMode(null), 'UNKNOWN');
+
+  assert.equal(isLoader(numericLoader), true);
+  assert.equal(isMaskrom(numericMaskrom), true);
+  assert.equal(readOnlyGate({ device: numericLoader, dbDone: false }).enabled, true);
+
+  const result = evaluatePreflight({
+    devices: [numericLoader],
+    current: 2,
+    loader: goodLoader,
+    facts,
+    eraseMode: 'none',
+    eraseConfirmed: true,
+    hasImage: true,
+  });
+  assert.equal(byId(result, CHECK_MASKROM).status, 'pass');
+  assert.equal(byId(result, CHECK_FIRST_COMMAND).status, 'pass');
+  assert.equal(result.ready, true);
+  assert.equal(result.canWrite, true);
+  assert.equal(result.canDb, false);
 });

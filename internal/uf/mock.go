@@ -430,6 +430,9 @@ type SimConfig struct {
 	// Capability is the 8-byte READ_CAPABILITY reply; default Direct LBA +
 	// First 4M Access.
 	Capability [8]byte
+	// IDB seeds the flash at LBA 64, so a test can present an existing New
+	// IDB ("RKNS") or legacy one ("RK28") the runner must not overwrite.
+	IDB []byte
 	// Faults are transport failures to inject.
 	Faults []SimFault
 }
@@ -500,6 +503,12 @@ func newSimulator(cfg SimConfig, mode rockusb.MediaMode, fl *simFlash) *Simulato
 	}
 	if fl == nil {
 		fl = &simFlash{data: make([]byte, int(cfg.FlashSectors)*SectorSize)}
+	}
+	if len(cfg.IDB) > 0 {
+		off := int(IDBDefaultLBA) * SectorSize
+		if off+len(cfg.IDB) <= len(fl.data) {
+			copy(fl.data[off:], cfg.IDB)
+		}
 	}
 	sim := &Simulator{cfg: cfg, mode: mode, fl: fl, link: simLink(mode), faults: append([]SimFault(nil), cfg.Faults...)}
 	return sim
@@ -780,6 +789,15 @@ func (s *Simulator) readData(op Op, lba uint32, length int) ([]byte, error) {
 		return padTo(b, length), nil
 	case rockusb.OpTestUnitReady:
 		return nil, fmt.Errorf("sim: TEST_UNIT_READY has no data stage")
+	case rockusb.OpReadLBA:
+		off := int64(lba) * SectorSize
+		end := off + int64(length)
+		s.fl.mu.Lock()
+		defer s.fl.mu.Unlock()
+		if off < 0 || end > int64(len(s.fl.data)) {
+			return nil, fmt.Errorf("sim: READ_LBA 0x%x+%d is outside the %d-byte flash", lba, length, len(s.fl.data))
+		}
+		return append([]byte(nil), s.fl.data[off:end]...), nil
 	}
 	return nil, fmt.Errorf("sim: opcode 0x%02X has no simulated data at lba 0x%x", uint8(op), lba)
 }

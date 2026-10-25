@@ -64,6 +64,9 @@ type LoaderPlan struct {
 type IDBPlan struct {
 	LBASector uint32 `json:"lbaSector"`
 	Bytes     int64  `json:"bytes"`
+	// Rewrite is the explicit --rewrite-idb decision. False means the runner
+	// reads LBA 64 first and leaves an existing valid IDB untouched.
+	Rewrite bool `json:"rewrite"`
 }
 
 // Item is one payload write (`wl`).
@@ -152,7 +155,24 @@ func chipMatches(want, got string) bool {
 	if w == "" || g == "" {
 		return true
 	}
-	return w == g
+	if w == g {
+		return true
+	}
+	// READ_CHIP_INFO returns Rockchip's 4-byte chip tag byte-reversed: an
+	// RK3588 tag 0x33353838 reads as "8853". Accept that form explicitly
+	// instead of reporting a false mismatch (SIL-515's first write attempt
+	// aborted at Check Chip for exactly this reason).
+	return len(w) == 4 && len(g) == 4 && reverseString(g) == w
+}
+
+// reverseString reverses the ASCII bytes of s. Chip tags are stored as four
+// reversed ASCII digits, so this is the only transformation needed.
+func reverseString(s string) string {
+	b := []byte(s)
+	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
+	}
+	return string(b)
 }
 
 // chipDigits normalises "RK3588", "rk3588s" and "3588" to "3588" so the image

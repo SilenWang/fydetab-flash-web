@@ -160,6 +160,52 @@ func R132Offsets() map[string]int64 {
 	return out
 }
 
+// FyeOS v23.0-SP1 (official Fydetab Duo image) measured constants. Captured
+// with the same tool as r132 by SIL-520 and attached to that issue; the parse
+// was re-checked against extract-output-v23.txt.
+const (
+	// V23Size is FydeOS_FydeTab_Duo_v23.0-SP1-com.img.
+	V23Size int64 = 8360540746
+	// V23SHA256 is the digest of that complete source image.
+	V23SHA256 = "5a3f79918a987160e355f680ad1e2b828c93d7f97a6c97aab57b04a197fe7010"
+
+	v23ImageOffset = 422438
+	v23RKAFLength  = 4065150976
+	v23Parameter   = v23ImageOffset + 428032
+	v23Trailer     = v23ImageOffset + v23RKAFLength
+)
+
+var (
+	//go:embed testdata/v23/rkfw-head.bin
+	v23RKFWHead []byte
+	//go:embed testdata/v23/rkaf-head.bin
+	v23RKAFHead []byte
+	//go:embed testdata/v23/parameter.bin
+	v23ParameterItem []byte
+	//go:embed testdata/v23/rkaf-crc-trailer.bin
+	v23RKAFCrcTrailer []byte
+	//go:embed testdata/v23/md5-tail.bin
+	v23MD5Tail []byte
+)
+
+// V23 returns the official FyeOS v23.0-SP1 image rebuilt from its captured
+// slices. It is the image SIL-515 flashed before the board stopped booting, so
+// its numbers are the ones the 4 GiB hole was measured on.
+func V23() Image {
+	return Image{
+		Name:   "fydeos-v23",
+		Size:   V23Size,
+		SHA256: V23SHA256,
+		Slices: []Slice{
+			{Name: "rkfw-head", Offset: 0, Data: v23RKFWHead},
+			{Name: "rkaf-head", Offset: v23ImageOffset, Data: v23RKAFHead},
+			{Name: "parameter", Offset: v23Parameter, Data: v23ParameterItem},
+			{Name: "rkaf-crc-trailer", Offset: v23Trailer, Data: v23RKAFCrcTrailer},
+			{Name: "md5-tail", Offset: V23Size - 32, Data: v23MD5Tail},
+		},
+	}
+}
+
 // LoadSlices reads a slice directory produced by tools/extract-rk-slices.sh:
 // a manifest.txt describing the source image plus one file per captured range.
 //

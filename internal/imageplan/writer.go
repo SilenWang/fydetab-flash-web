@@ -42,7 +42,7 @@ func WriterPlan(rep *Report, loader *EmbeddedLoader) (*uf.Plan, error) {
 	}
 	for _, st := range rep.Stages {
 		if st.Phase == "gpt" {
-			plan.IDB = uf.IDBPlan{LBASector: uf.IDBDefaultLBA, Bytes: st.Bytes}
+			plan.IDB = uf.IDBPlan{LBASector: uf.IDBDefaultLBA, Bytes: st.Bytes, Rewrite: rep.IDBRewrite}
 			break
 		}
 	}
@@ -53,7 +53,7 @@ func WriterPlan(rep *Report, loader *EmbeddedLoader) (*uf.Plan, error) {
 		plan.Items = append(plan.Items, uf.Item{
 			Name:       it.Name,
 			Partition:  it.Partition,
-			FileOffset: it.FileOffset,
+			FileOffset: it.DataOffset,
 			Size:       it.Size,
 			PaddedSize: it.PaddedSize,
 			TargetLBA:  uint32(it.TargetLBA),

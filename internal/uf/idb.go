@@ -42,6 +42,114 @@ const (
 	ModelRawLoader = "raw-loader"
 )
 
+// IDBType is what the bytes at IDBDefaultLBA look like on a real device.
+//
+// SIL-515 read LBA 64 back on the Fydetab Duo and found an "RKNS" header, i.e.
+// a New IDB — while this tool wrote an "rk28-rc4" block there. Writing the
+// wrong IDB model makes the BootROM unable to read uboot, which is the most
+// likely reason the device did not boot at all. The type is therefore read
+// from the device, never assumed.
+type IDBType string
+
+const (
+	// IDBTypeNew is the current block format ("RKNS" magic).
+	IDBTypeNew IDBType = "RKNS"
+	// IDBTypeRK28 is the legacy block format ("RK28" magic, the rk28-rc4
+	// model this package can build).
+	IDBTypeRK28 IDBType = "RK28"
+	// IDBTypeEmpty means the sectors read as all 0x00 (erased or never
+	// written).
+	IDBTypeEmpty IDBType = "empty"
+	// IDBTypeUnknown means the sectors hold bytes that carry neither magic.
+	IDBTypeUnknown IDBType = "unknown"
+)
+
+// IDBInfo is the identification of the IDB currently on the device.
+type IDBInfo struct {
+	Type IDBType `json:"type"`
+	// Magic is the first four bytes rendered as text (or hex when not
+	// printable), so a log reader can see what was actually there.
+	Magic string `json:"magic"`
+	// HeadHex is the first 32 bytes, the fingerprint recorded before any
+	// overwrite.
+	HeadHex string `json:"headHex"`
+	// Verified reports whether Type is a format this package recognises.
+	Verified bool `json:"verified"`
+}
+
+// IDBProbeSectors is how much of LBA 64 is read to identify the block. A new
+// IDB header is well inside the first sector; 8 sectors leaves room for the
+// header fields and keeps the read one command.
+const IDBProbeSectors = 8
+
+// IdentifyIDB classifies the bytes read from IDBDefaultLBA.
+func IdentifyIDB(b []byte) IDBInfo {
+	info := IDBInfo{Type: IDBTypeUnknown}
+	if len(b) < 4 {
+		info.Type = IDBTypeEmpty
+		return info
+	}
+	head := b
+	if len(head) > 32 {
+		head = head[:32]
+	}
+	info.HeadHex = hexBytes(head)
+	info.Magic = printableMagic(b[:4])
+
+	switch {
+	case allZero(b):
+		info.Type = IDBTypeEmpty
+	case string(b[0:4]) == "RKNS":
+		info.Type = IDBTypeNew
+		info.Verified = true
+	case string(b[0:4]) == "RK28":
+		info.Type = IDBTypeRK28
+		info.Verified = true
+	}
+	return info
+}
+
+// ModelForType returns the byte model that produces an IDB of the given type,
+// or an error when this package cannot build that format.
+func ModelForType(t IDBType) (IDBModel, error) {
+	switch t {
+	case IDBTypeRK28:
+		return NewRK28RC4Model(), nil
+	case IDBTypeNew:
+		return nil, fmt.Errorf("uf: the device holds a New IDB (%q); this build has no verified RKNS writer, so it will not rebuild it", t)
+	case IDBTypeEmpty, IDBTypeUnknown:
+		return nil, fmt.Errorf("uf: no existing IDB type to rebuild (%q)", t)
+	}
+	return nil, fmt.Errorf("uf: unknown IDB type %q", t)
+}
+
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0x00 {
+			return false
+		}
+	}
+	return true
+}
+
+func printableMagic(b []byte) string {
+	for _, c := range b {
+		if c < 0x20 || c > 0x7E {
+			return hexBytes(b)
+		}
+	}
+	return string(b)
+}
+
+func hexBytes(b []byte) string {
+	const digits = "0123456789abcdef"
+	out := make([]byte, 0, len(b)*2)
+	for _, v := range b {
+		out = append(out, digits[v>>4], digits[v&0x0F])
+	}
+	return string(out)
+}
+
 // rk28RC4Key is RK_RC4_KEY from rk_image_tool/src/common/rc4.c.
 var rk28RC4Key = []byte{
 	0x7C, 0x4E, 0x03, 0x04, 0x55, 0x05, 0x09, 0x07,

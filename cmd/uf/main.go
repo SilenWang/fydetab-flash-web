@@ -67,6 +67,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		retries      = fs.Int("retries", 1, "extra attempts for a timed out USB transfer")
 		timeout      = fs.Duration("timeout", 0, "per USB transfer deadline (default 5s)")
 		idbModel     = fs.String("idb-model", uf.ModelRK28RC4, "IDB byte model: "+strings.Join(uf.IDBModelNames(), "|"))
+		rewriteIDB   = fs.Bool("rewrite-idb", false, "rebuild the IDB at LBA 64 even when the device already holds a valid one (default: keep it)")
+		idbBackup    = fs.String("idb-backup", "", "write the original IDB bytes to this file before overwriting them")
 		mockFault    = fs.String("mock-fault", "", "inject a mock failure: <timeout|failed|stall|disconnect>:<item|idb|lba:0x...>")
 		showVersion  = fs.Bool("version", false, "print the tool version and exit")
 	)
@@ -175,7 +177,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	rep, err := BuildReport(img, doc, ver, Options{FlashSectors: *flashSectors, NoReset: *noReset})
+	rep, err := BuildReport(img, doc, ver, Options{FlashSectors: *flashSectors, NoReset: *noReset, RewriteIDB: *rewriteIDB})
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", toolName, err)
 		return 2
@@ -201,11 +203,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if ver.Failed() {
 			return 1
 		}
+		if rep.Data.Failed() {
+			fmt.Fprintf(stderr, "%s: refusing to write: payload signature check failed (see the payload table / warnings)\n", toolName)
+			return 1
+		}
 		return 0
 	}
 
 	if ver.Failed() {
 		fmt.Fprintf(stderr, "%s: refusing to write: image verification failed (use --no-verify to override)\n", toolName)
+		return 1
+	}
+	if rep.Data.Failed() {
+		fmt.Fprintf(stderr, "%s: refusing to write: payload signature check failed; the item read offsets are not trustworthy\n", toolName)
 		return 1
 	}
 
@@ -236,6 +246,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		NoReset:   *noReset,
 		StartItem: *resumeFrom,
 		IDB:       model,
+		RewriteIDB: *rewriteIDB,
+		IDBBackupPath: *idbBackup,
 		Event:     func(ev uf.Event) { writeEvent(stderr, ev) },
 	}
 	var (
@@ -368,6 +380,7 @@ func writeText(w io.Writer, rep *Report) {
 	fmt.Fprintf(w, "%s --dry-run: %s\n", toolName, rep.Image)
 	writeKeyValue(w, rep)
 	writeLoader(w, rep)
+	writePayloads(w, rep)
 	writeStages(w, rep)
 	writePartitions(w, rep)
 	writeUncovered(w, rep)
@@ -375,6 +388,49 @@ func writeText(w io.Writer, rep *Report) {
 	writeList(w, "warnings", rep.Warnings)
 	writeList(w, "notes", rep.Notes)
 	fmt.Fprintf(w, "\ndry run: nothing was written and no device was opened.\n")
+}
+
+// writePayloads prints where every item's bytes really are and what the first
+// bytes at that offset look like. This is the check that would have caught the
+// SIL-515 write: 7/7 partitions "succeeded" while the parser was reading zeros
+// from the wrong offset of an archive with a 4 GiB hole.
+func writePayloads(w io.Writer, rep *Report) {
+	if rep.Data == nil {
+		return
+	}
+	fmt.Fprintf(w, "\npayload offsets and signatures (hole %s at logical 0x%x):\n",
+		humanBytes(rep.Data.Hole), rep.Data.HoleStart)
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "  item\tpos\tdataOffset\tsize\tmagic\texpected\tstatus")
+	for _, ip := range rep.Items {
+		if ip.Size == 0 {
+			continue
+		}
+		expected := ip.ExpectedMagic
+		if expected == "" {
+			expected = "-"
+		}
+		status := "ok"
+		switch {
+		case ip.ExpectedMagic == "":
+			status = "reported"
+		case !ip.MagicOK:
+			status = "MISMATCH"
+		}
+		shift := ""
+		if ip.Shifted {
+			shift = " (+hole)"
+		}
+		fmt.Fprintf(tw, "  %s\t0x%x\t0x%x%s\t%s\t%s\t%s\t%s\n",
+			ip.Name, ip.Pos, ip.DataOffset, shift, humanBytes(ip.Size), ip.Magic, expected, status)
+	}
+	tw.Flush()
+	if !rep.Data.Decided {
+		fmt.Fprintf(w, "  ✗ 洞的位置无法用 payload 签名确认：item 偏移未经验证，拒绝写入。\n")
+	}
+	if rep.Data.FailedCount > 0 {
+		fmt.Fprintf(w, "  ✗ %d 项读不到预期签名：拒绝写入（见 warnings）。\n", rep.Data.FailedCount)
+	}
 }
 
 // writeLoader prints the Download Boot blob's identity. The default is the one

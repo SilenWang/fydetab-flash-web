@@ -42,6 +42,9 @@ type Options struct {
 	FlashSectors uint64
 	// NoReset mirrors uf's --noreset: the plan then skips the rd stage.
 	NoReset bool
+	// RewriteIDB mirrors uf's --rewrite-idb: the IDB stage then rebuilds the
+	// block instead of keeping the one already on the device.
+	RewriteIDB bool
 }
 
 // VerificationInfo carries the checksum results for the report.
@@ -79,7 +82,12 @@ type ContainerInfo struct {
 	RKAFLength      int64  `json:"rkafLength"`
 	RKAFLengthField uint32 `json:"rkafLengthField"`
 	LengthWrapped   bool   `json:"lengthWrapped"`
-	Model           string `json:"model,omitempty"`
+	// DataHole is the number of bytes packed into the RKAF archive that its
+	// 32-bit item table cannot describe (the STATE slot's reserved space).
+	// DataHoleStart is the logical archive offset where it begins.
+	DataHole      int64  `json:"dataHole,omitempty"`
+	DataHoleStart int64  `json:"dataHoleStart,omitempty"`
+	Model         string `json:"model,omitempty"`
 	ID              string `json:"id,omitempty"`
 	Manufacturer    string `json:"manufacturer,omitempty"`
 	ArchiveVersion  uint32 `json:"archiveVersion"`
@@ -104,8 +112,26 @@ type Stage struct {
 
 // ItemPlan is one RKAF item mapped onto the flash.
 type ItemPlan struct {
-	Name        string  `json:"name"`
-	FileOffset  int64   `json:"fileOffset"`
+	Name string `json:"name"`
+	// Pos is the 32-bit payload offset stored in the item table, relative to
+	// the RKAF archive start.
+	Pos int64 `json:"pos"`
+	// DataOffset is where the payload really is in the file. It equals
+	// RKAFOffset+Pos unless the archive carries a hole, in which case every
+	// item after the hole is stored DataHole bytes further along.
+	DataOffset int64 `json:"dataOffset"`
+	// Shifted marks an item stored after the archive hole.
+	Shifted bool `json:"shifted,omitempty"`
+	// Magic is the leading signature actually read at DataOffset: CHROMEOS,
+	// FDT, FAT, RSCE, zero, ... It is a measurement, so a wrong offset shows
+	// up here instead of only on the device.
+	Magic string `json:"magic"`
+	// ExpectedMagic is the signature this item must carry, empty when the
+	// table has no recorded expectation for that name.
+	ExpectedMagic string `json:"expectedMagic,omitempty"`
+	// MagicOK reports whether ExpectedMagic was found (true when there is no
+	// expectation to check).
+	MagicOK     bool    `json:"magicOk"`
 	Size        int64   `json:"size"`
 	PaddedSize  int64   `json:"paddedSize"`
 	NandAddr    *uint32 `json:"nandAddr,omitempty"`
@@ -144,6 +170,35 @@ type UncoveredRange struct {
 	CoveredBytes   int64  `json:"coveredBytes"`
 }
 
+// DataCheck is the per-item payload audit: where each item's bytes really are
+// (dataOffset), and what the first bytes at that offset look like. It exists so
+// a wrong offset is visible in the plan instead of only on flash: SIL-515 wrote
+// 7/7 partitions "successfully" from zeros because the parser read the 32-bit
+// pos of an archive with a 4 GiB hole.
+type DataCheck struct {
+	// Hole is the byte count derived from the file layout (0 when none).
+	Hole int64 `json:"hole"`
+	// HoleStart is the logical archive offset the hole begins at.
+	HoleStart int64 `json:"holeStart,omitempty"`
+	// Decided is false when no payload signature could settle where the hole
+	// starts; the item offsets are then unverified and a write is refused.
+	Decided bool `json:"decided"`
+	// Checked/Failed count items with an expected signature.
+	Checked     int `json:"checked"`
+	FailedCount int `json:"failed"`
+	// Missing lists the items whose expected magic was not found.
+	Missing []string `json:"missing,omitempty"`
+}
+
+// Failed reports whether any item's expected signature was not found, or the
+// hole position could not be verified.
+func (c *DataCheck) Failed() bool {
+	if c == nil {
+		return false
+	}
+	return c.FailedCount > 0 || (c.Hole > 0 && !c.Decided)
+}
+
 // Report is the complete dry-run plan.
 type Report struct {
 	Image        string           `json:"image"`
@@ -151,6 +206,8 @@ type Report struct {
 	Container    ContainerInfo    `json:"container"`
 	Parameter    ParameterInfo    `json:"parameter"`
 	Verification VerificationInfo `json:"verification"`
+	// Data is the payload offset/magic audit (see DataCheck).
+	Data *DataCheck `json:"data,omitempty"`
 	// Loader is the Download Boot blob's identity (image's own or a file the
 	// user picked). Filled by the caller after BuildReport, because picking
 	// the loader is a user choice, not a property of the image.
@@ -163,9 +220,12 @@ type Report struct {
 	// Erase is the explicit --erase-tail decision, filled by applyEraseDecision.
 	Erase      *EraseDecision `json:"erase,omitempty"`
 	NoReset    bool           `json:"noReset,omitempty"`
-	TotalBytes int64          `json:"totalBytes"`
-	Warnings   []string       `json:"warnings,omitempty"`
-	Notes      []string       `json:"notes,omitempty"`
+	// IDBRewrite is the explicit --rewrite-idb decision; false means the run
+	// reads LBA 64 first and keeps an existing valid IDB.
+	IDBRewrite bool     `json:"idbRewrite,omitempty"`
+	TotalBytes int64    `json:"totalBytes"`
+	Warnings   []string `json:"warnings,omitempty"`
+	Notes      []string `json:"notes,omitempty"`
 }
 
 // EraseDecision records what a run would do with partition tails the image does
@@ -191,6 +251,7 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 		FileSize:     img.Size,
 		Verification: ver,
 		NoReset:      opts.NoReset,
+		IDBRewrite:   opts.RewriteIDB,
 		Container: ContainerInfo{
 			HasRKFW:         img.HasRKFW,
 			LoaderOffset:    img.LoaderOffset,
@@ -199,6 +260,8 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 			RKAFLength:      img.RKAFLength,
 			RKAFLengthField: img.RKAFLengthField,
 			LengthWrapped:   img.LengthWrapped,
+			DataHole:        img.DataHole,
+			DataHoleStart:   img.DataHoleStart,
 			Model:           img.Archive.Model,
 			ID:              img.Archive.ID,
 			Manufacturer:    img.Archive.Manufacturer,
@@ -254,9 +317,22 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 	for i, it := range img.Items {
 		ip := ItemPlan{
 			Name:       it.Name,
-			FileOffset: img.ItemOffset(it),
+			Pos:        int64(it.Pos),
+			DataOffset: img.ItemOffset(it),
+			Shifted:    img.DataHole > 0 && int64(it.Pos) >= img.DataHoleStart,
 			Size:       int64(it.Size64),
 			PaddedSize: alignUp(int64(it.Size64), int64(rkfw.SectorSize)),
+		}
+		if it.HasData() {
+			sig := img.ItemSignature(it)
+			ip.Magic = sig.String()
+			ip.ExpectedMagic = rkfw.ExpectedSignature(it.Name)
+			// "unreadable" means the source could not be sampled (an
+			// in-memory plan fixture, or a truncated file). It is not a
+			// mismatch, but it is also not proof; the write path still reads
+			// and verifies the bytes it sends.
+			ip.MagicOK = ip.ExpectedMagic == "" || sig.Name == "unreadable" ||
+				(sig.Known && strings.EqualFold(sig.Name, ip.ExpectedMagic))
 		}
 		if it.NandAddr != rkfw.NoAddress {
 			addr := it.NandAddr
@@ -339,6 +415,37 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 		itemPlans[i] = ip
 	}
 	rep.Items = itemPlans
+
+	// Payload audit: record what the first bytes at each dataOffset look like,
+	// so a wrong offset shows up in the plan (and refuses the write) instead
+	// of only on flash.
+	dc := &DataCheck{
+		Hole:      img.DataHole,
+		HoleStart: img.DataHoleStart,
+		Decided:   img.DataHole == 0 || img.DataHoleDecided,
+	}
+	for _, ip := range itemPlans {
+		if ip.ExpectedMagic == "" {
+			continue
+		}
+		dc.Checked++
+		if !ip.MagicOK {
+			dc.FailedCount++
+			dc.Missing = append(dc.Missing, fmt.Sprintf("%s: expected %s at dataOffset 0x%x, read %s",
+				ip.Name, ip.ExpectedMagic, ip.DataOffset, ip.Magic))
+		}
+	}
+	if dc.FailedCount > 0 {
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf(
+			"%d item(s) do not carry their expected payload magic: %s — the read offset is wrong or the image is damaged; refusing to write",
+			dc.FailedCount, strings.Join(dc.Missing, "; ")))
+	}
+	if !dc.Decided {
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf(
+			"the RKAF archive has a %s hole but no payload signature settles where it starts: item data offsets are unverified, refusing to write",
+			HumanBytes(img.DataHole)))
+	}
+	rep.Data = dc
 
 	// Partition coverage.
 	for idx, e := range lay.Entries {
@@ -427,8 +534,13 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 	}
 	idb := alignUp(loader, parameter.SectorSize)
 	if idb > 0 {
-		rep.appendStage("gpt", "Prepare/Download IDB", fmt.Sprintf("RC4(loader) per 512 B sector, %s written at LBA %d",
-			HumanBytes(idb), IDBSector), idb)
+		detail := fmt.Sprintf("read LBA %d first and identify the device's IDB (RKNS/RK28/empty); write only when it is absent or --rewrite-idb is given (%s, RC4(loader) per 512 B sector)",
+			IDBSector, HumanBytes(idb))
+		if opts.RewriteIDB {
+			detail = fmt.Sprintf("--rewrite-idb: read LBA %d, back the original IDB up, rebuild in the identified format (%s, RC4(loader) per 512 B sector)",
+				IDBSector, HumanBytes(idb))
+		}
+		rep.appendStage("gpt", "Prepare/Download IDB", detail, idb)
 	}
 
 	writeable := make([]int, 0, len(img.Items))
@@ -446,7 +558,7 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 	})
 	for _, i := range writeable {
 		ip := itemPlans[i]
-		detail := fmt.Sprintf("image 0x%x, %s -> LBA 0x%x (%s)", ip.FileOffset, HumanBytes(ip.Size), ip.TargetLBA, ip.Partition)
+		detail := fmt.Sprintf("image 0x%x, %s -> LBA 0x%x (%s)", ip.DataOffset, HumanBytes(ip.Size), ip.TargetLBA, ip.Partition)
 		if pad := ip.PaddedSize - ip.Size; pad > 0 {
 			detail += fmt.Sprintf(", %s zero padding", HumanBytes(pad))
 		}

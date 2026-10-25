@@ -4,18 +4,23 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
-    <title>RK3588 WebFlasher · M3b（WebUSB 写入 + 真机前自检）</title>
+    <meta name="theme-color" content="#0e1116" />
+    <title>RK3588 WebFlasher · M4（PWA + 离线 + 官方 zip 直读）</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon-192.png" sizes="192x192" type="image/png" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header class="page-header">
       <div class="title">
         <h1>RK3588 WebFlasher</h1>
-        <p class="subtitle">rockusb over WebUSB · Go/WASM 核心 · M3b（uf 写入 + 镜像自带 loader + 上机前自检）</p>
+        <p class="subtitle">rockusb over WebUSB · Go/WASM 核心 · M4（可安装 PWA、离线、官方 zip 直读）</p>
       </div>
       <div class="badges">
         <span id="mode-badge" class="badge muted" data-mode="none">无设备</span>
         <span id="core-badge" class="badge muted" data-core="loading">core 加载中</span>
+        <span id="net-badge" class="badge muted" data-net="online">在线</span>
       </div>
     </header>
 
@@ -33,6 +38,22 @@
     <main class="layout">
       <div class="column">
         <section class="panel">
+          <h2>安装与离线（PWA）</h2>
+          <div class="controls">
+            <button id="btn-install" type="button" class="primary" hidden>安装为应用</button>
+            <button id="btn-reload-app" type="button" hidden>刷新页面（新版本）</button>
+          </div>
+          <p id="install-note" class="hint">
+            安装后从桌面/开始菜单打开，断网也能载入页面与 wasm（安装本身不授予设备权限）。
+          </p>
+          <p id="sw-note" class="hint">离线：检查 service worker…</p>
+          <p class="hint">
+            只有 Chromium 内核（桌面 Chrome / Edge、ChromeOS、Android Chrome）有 WebUSB；Safari 与 Firefox
+            既不能写入，也无法安装本页。驱动与 udev 规则见 <code>docs/webusb-drivers.md</code>。
+          </p>
+        </section>
+
+        <section class="panel">
           <h2>1 · 设备</h2>
           <div class="controls">
             <button id="btn-authorize" type="button" class="primary">授权设备</button>
@@ -41,6 +62,14 @@
               <input id="chk-mock" type="checkbox" />
               演示模式（mock 设备）
             </label>
+          </div>
+          <div id="reconnect" class="reconnect" hidden>
+            <h3>设备重连向导</h3>
+            <ol id="reconnect-steps"></ol>
+            <div class="controls">
+              <button id="btn-reconnect-auth" type="button" class="primary">重新授权</button>
+              <button id="btn-reconnect-dismiss" type="button">暂时忽略</button>
+            </div>
           </div>
           <p class="hint">
             首次使用点“授权设备”，在浏览器弹窗里选 <code>0x2207</code> 设备。设备重新枚举（maskrom → loader）后浏览器会撤销按实例的授权，
@@ -53,17 +82,19 @@
           <h2>2 · 镜像与 loader</h2>
           <div class="controls">
             <label class="file">
-              <input id="file-image" type="file" accept=".img,.bin,application/octet-stream" />
-              <span id="image-label">选择 update.img…</span>
+              <input id="file-image" type="file" accept=".img,.bin,.zip,application/octet-stream,application/zip" />
+              <span id="image-label">选择 update.img 或官方 .zip…</span>
             </label>
             <button id="btn-demo-image" type="button" hidden>载入演示镜像</button>
             <button id="btn-plan" type="button" class="primary" disabled>生成写入计划</button>
           </div>
           <p class="hint">
-            默认使用<strong>镜像自带的 loader</strong>（RKFW 头的 loader offset/length），页面会切出来并显示 sha256、长度和 LDR 构建日期，
-            再与镜像的 chip 比对。需要时可手动指定别的 loader，但会被标记“非镜像自带”——真机上错配的 loader 会在 <code>index 0</code> 被 BootROM 拒收。
+            官方 <code>.zip</code> 可以直接选：页面只在中央目录里定位首个 <code>RKFW</code> 条目，再用
+            <code>DecompressionStream('deflate-raw')</code> 按需解压（ZIP64 也支持），不落地 3.8 GiB —
+            解出来的字节与同一份 <code>.img</code> 完全相同，所以计划逐字段一致。
           </p>
           <pre id="image-summary" class="summary">尚未选择镜像。</pre>
+          <pre id="zip-summary" class="summary" hidden></pre>
           <pre id="loader-summary" class="summary">尚未生成计划。</pre>
           <div class="controls">
             <label class="file">
@@ -122,6 +153,7 @@
             <button id="btn-db" type="button" data-cbw="true">Download Boot（db）</button>
             <button type="button" data-command="help">help</button>
             <button id="btn-clear" type="button">清空输出</button>
+            <button id="btn-export-log" type="button">导出日志（NDJSON）</button>
           </div>
           <p class="hint">
             <code>info</code> 与 <code>db</code> 会发 CBW/控制传输：设备在 maskrom 且 db 尚未成功时它们不可用——真机上正是这条把上电周期弄脏的。
@@ -170,6 +202,10 @@
         （<code>RKU_DeviceRequest</code>、<code>RKDevice::DownloadBoot</code>、<code>RKComm.cpp</code> 的写命令）；实现见
         <code>internal/rockusb</code>、<code>internal/uf</code>、<code>internal/imageplan</code>、<code>cmd/wasm</code>。本仓库以 GPL-2.0 发布，
         不包含 <code>upgrade_tool</code> 二进制，也不分发任何 Rockchip loader blob。
+      </p>
+      <p>
+        浏览器与驱动：<code>docs/webusb-drivers.md</code>（macOS arm64 / Linux udev / Windows WinUSB）。
+        离线安装与 zip 直读：<code>docs/pwa-offline.md</code>。
       </p>
     </footer>
 

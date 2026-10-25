@@ -97,3 +97,23 @@ func TestEraseModeParseAndDescribe(t *testing.T) {
 		}
 	}
 }
+
+func TestChipMatchesAcceptsReversedTag(t *testing.T) {
+	cases := []struct {
+		want, got string
+		ok        bool
+	}{
+		{"RK3588", "8853", true},   // READ_CHIP_INFO byte-reversed tag
+		{"RK3588", "RK3588", true}, // already normalised
+		{"RK3588", "3588", true},
+		{"RK3588", "3588S", true},
+		{"RK3588", "3566", false},
+		{"RK3566", "6653", true},
+		{"RK3588", "8852", false},
+	}
+	for _, c := range cases {
+		if got := chipMatches(c.want, c.got); got != c.ok {
+			t.Errorf("chipMatches(%q, %q) = %t, want %t", c.want, c.got, got, c.ok)
+		}
+	}
+}
