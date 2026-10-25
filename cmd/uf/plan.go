@@ -148,9 +148,23 @@ type Report struct {
 	Items        []ItemPlan       `json:"items"`
 	Partitions   []PartitionPlan  `json:"partitions"`
 	Uncovered    []UncoveredRange `json:"uncovered,omitempty"`
-	TotalBytes   int64            `json:"totalBytes"`
-	Warnings     []string         `json:"warnings,omitempty"`
-	Notes        []string         `json:"notes,omitempty"`
+	// Erase is the explicit --erase-tail decision, filled by applyEraseDecision.
+	Erase      *EraseDecision `json:"erase,omitempty"`
+	NoReset    bool           `json:"noReset,omitempty"`
+	TotalBytes int64          `json:"totalBytes"`
+	Warnings   []string       `json:"warnings,omitempty"`
+	Notes      []string       `json:"notes,omitempty"`
+}
+
+// EraseDecision records what a run would do with partition tails the image does
+// not fill. The question is unresolved for the Fydetab Duo image (STATE is 5 GiB
+// but only ~1 GiB is payload), so it is a visible choice rather than an implicit
+// side effect of the writer.
+type EraseDecision struct {
+	Mode   string `json:"mode"`   // none | fill | erase-lba
+	Detail string `json:"detail"` // human sentence, same text the run logs
+	Tails  int    `json:"tails"`
+	Bytes  int64  `json:"bytes"`
 }
 
 // BuildReport maps image items onto parameter partitions and projects the uf
@@ -164,6 +178,7 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 		Image:        img.Path,
 		FileSize:     img.Size,
 		Verification: ver,
+		NoReset:      opts.NoReset,
 		Container: ContainerInfo{
 			HasRKFW:         img.HasRKFW,
 			LoaderOffset:    img.LoaderOffset,
