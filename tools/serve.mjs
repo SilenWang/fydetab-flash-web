@@ -21,6 +21,7 @@ const MIME = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.wasm': 'application/wasm',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
@@ -67,7 +68,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`RK3588 probe: http://localhost:${port}/`);
+  console.log(`RK3588 webflasher: http://localhost:${port}/app/  (M0 probe: /probe/)`);
   console.log(`serving ${root}`);
   console.log('Chrome/Edge only. Press Ctrl+C to stop.');
 });

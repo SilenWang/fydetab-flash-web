@@ -78,6 +78,8 @@ func (e ErrorCode) String() string {
 		return "ERR_DEVICE_NOT_SUPPORT"
 	case ErrRequestFail:
 		return "ERR_REQUEST_FAIL"
+	case ErrTimeout:
+		return "ERR_TIMEOUT"
 	default:
 		return fmt.Sprintf("ERR_UNKNOWN(%d)", int(e))
 	}

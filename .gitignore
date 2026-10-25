@@ -4,6 +4,8 @@
 
 # Go
 /dist/
+# wasm build outputs (pixi run wasm)
+web/app/wasm/
 *.test
 *.out
 coverage.txt

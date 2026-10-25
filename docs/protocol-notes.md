@@ -134,3 +134,109 @@ WebUSB 只暴露 `usbVersionMajor/Minor/Subminor`，探针把它们拼回 `major
   我们的路线是 Go 重写协议核心、JS 只做传输，因此只借鉴了它的 WebUSB 适配层结论：
   `requestDevice()` 必须在用户手势里、`getDevices()` 拿到的是已授权设备、大镜像要用 `File.slice()` 流式读。
 - 原生 `upgrade_tool`（闭源，x86-64）只作为行为基准与抓包对照，不作为实现来源，也不打包分发。
+
+## 9. Download Boot（M1 实现，已回源码核对）
+
+真机（SIL-511 / stage 2）结论：**裸 maskrom 不接受 rockusb 的 bulk CBW**。5 条只读命令的 31 字节
+CBW 在 bulk OUT 全部被 STALL（`trace.json` 里 5 条 `ERR_DEVICE_WRITE_FAILED`），原版 `upgrade_tool RCI`/`TD`
+同样失败（`RKU_Write failed,err=-1`）。只读信息只有先做 Download Boot、设备变成 LOADER 之后才读得到。
+
+### 9.1 传输形态
+
+`RKU_DeviceRequest`（`RKComm.cpp:811-882`）是**唯一**走 control transfer 的入口，且只在 MASKROM 下可用：
+
+- `bmRequestType = 0x40`（vendor，host→device）、`bRequest = 0x0C`、`wValue = 0`；
+- `wIndex = 0x0471`（DDR / USB head 段）或 `0x0472`（usbplug 段），其他 index 直接
+  `ERR_REQUEST_NOT_SUPPORT`；
+- 每包 ≤ **4096 B**，循环把整个 payload 发完；
+- payload 末尾追加 **CRC-CCITT** 2 字节：init `0xFFFF`、poly `0x1021`、**高字节在前**；
+- 非 maskrom（`m_deviceDesc.emUsbType != RKUSB_MASKROM`）直接 `ERR_DEVICE_NOT_SUPPORT`。
+
+两个上游特殊分支（`dwsize % 4096`）：
+
+| 余数 | 上游行为 | 本仓库 |
+|---|---|---|
+| `4095` | `dwDataSize++` 补 1 个 0，让 CRC 落进新包 → 包序列 `4096 + 2` | 一致，`PlanVendorRequest` |
+| `4094` | CRC 恰好填满 4096，随后再发 **1 字节**控制传输，并要求返回 0 | 一致，`PendingZeroWrite`；返回 1 视为失败（上游 `iRet != 0`） |
+| 其他 | 正常切包，最后一包可短 | 一致 |
+
+RK3588 官方 loader 的三段长度（2048 / 51200 / 88064）都对 4096 取余 2048，两条特殊分支在真机上不会触发，但
+单测覆盖它们，避免未来段长变化悄悄偏离上游。
+
+### 9.2 RKBOOT 容器（`RKBoot.h` / `boot_merger.h`，packed）
+
+102 字节头部：
+
+| 偏移 | 长度 | 字段 |
+|---|---|---|
+| 0 | 4 | `uiTag`：`BOOT`(0x544F4F42) 或 `LDR `(0x2052444C) |
+| 4 | 2 | `usSize`（头部长度，102） |
+| 6 | 4 | `dwVersion` |
+| 10 | 4 | `dwMergeVersion` |
+| 14 | 7 | `STRUCT_RKTIME`（year u16 + month/day/hour/minute/second） |
+| 21 | 4 | `emSupportChip`：RK3588 是 `convertChipType("3588") = 0x33353838` |
+| 25 | 1 | 471 段数量 |
+| 26 | 4 | 471 段表偏移 |
+| 30 | 1 | 471 段表项长度（57） |
+| 31 | 1 | 472 段数量 |
+| 32 | 4 | 472 段表偏移 |
+| 36 | 1 | 472 段表项长度 |
+| 37 | 1 | loader 段数量（Download Boot 不用） |
+| 38 | 4 | loader 段表偏移 |
+| 42 | 1 | loader 段表项长度 |
+| 43 | 1 | `signFlag`（`'S'` / `'N'`） |
+| 44 | 1 | `rc4Flag` |
+| 45 | 57 | reserved |
+
+57 字节段表项：`size`(1) + `type`(4, 1=471 / 2=472) + `name`(20 × UTF-16LE，取低字节) +
+`dataOffset`(4) + `dataSize`(4) + `dataDelay`(4，延迟毫秒)。
+
+文件末尾 4 字节是 **CRC-32**，覆盖它之前的所有字节。
+
+### 9.3 一个必须照抄的上游 bug：CRC-32 多项式
+
+`rkdeveloptool` 的 `gTable_Crc32` 注释写着 `crc32 factor 0x04C10DB7` —— 比标准 CRC-32 的 `0x04C11DB7`
+少了一个 `1`。`CRC_32` 用这张表、init 0、MSB-first、无最终异或。**用标准 CRC-32 会把每一个真实 loader 都判成
+损坏**，所以 `internal/rockusb/crc.go` 原样复现 `0x04C10DB7`，单测同时钉住表的前 5 项并断言它与标准多项式不同。
+
+### 9.4 报文顺序与真机现象
+
+1. 先按文件顺序发所有 471 段，再发所有 472 段（`RKDevice.cpp:510-580`）。
+2. 每段结束按 `dataDelay` 休息；全部发完 `sleep(1)` 等设备重新枚举。
+3. 首包 = `UsbHead` 2048 B + 2 B CRC = **2050 B**，与 `upgrade_tool` 日志 `Total(2050),Sended(0)` 对得上。
+4. 真机上 `upgrade_tool DB` 在 `index(0)` 被 BootROM 拒绝（`Boot_VendorRequest471 failed,err=-1`，4 ms）。
+   本仓库据此把 `db` 失败分成三类（`DBError.Kind`）：
+   `DB_BOOTROM_REJECTED`（首包 USB 传输错误）/ `DB_TRANSFER_FAILED`（首包之后的失败或短写）/
+   `DB_LOADER_INVALID`、`DB_LOADER_CHIP_MISMATCH`（本地文件问题），另加 `DB_NOT_MASKROM`。
+
+## 10. M1 的状态机与命令
+
+| 状态 | 判定 | 可做 |
+|---|---|---|
+| MASKROM | `bcdUSB bit0 == 0` | `ld`、`desc`、`db` |
+| LOADER | `bcdUSB bit0 == 1` | `ld`、`desc`、`cd`/`sd`、`info`（chip/flash/capability/storage） |
+
+`info` 在 MASKROM 下**在打开设备之前**就拒绝（`ERR_DEVICE_NOT_SUPPORT`），因为真机已经证明 5/5 条 CBW 都会被
+STALL；拒绝信息直接指向 `db`。`db` 成功后 `awaitingReenumeration = true`，下一条命中设备的命令（或 `ld`）会
+重新枚举一次，看到 LOADER 就把这个标记清掉。
+
+### 命令表（`internal/device/shell.go`）
+
+| 命令 | 说明 |
+|---|---|
+| `ld` | 列出已授权设备，输出 `DevNo=1 Vid=0x2207,Pid=0x350b,Mode=Maskrom` |
+| `desc` | 打印描述符（纯本地，无 USB 传输） |
+| `cd <n>` | ChangeDevice：按 DevNo 选择设备 |
+| `sd <n>` | SwitchDevice：重新绑定当前设备（重新枚举后用） |
+| `db` | Download Boot：把本地 loader 写进 maskrom RAM |
+| `info [chip\|flash\|cap\|storage]` | 读只读信息（仅 LOADER） |
+| `help` / `version` | 帮助与核心版本 |
+
+没有 `uf`、`wl`、`el`、`rd`、`ppt`、`gpt`、`cs`：本阶段不写 flash、不擦除、不复位、不切存储。
+`TestNoFlashWriteCommands` 与 wasm 集成测试都盯着这一点。
+
+### 重新枚举后的授权
+
+浏览器授权绑定在 USB device **实例**上：设备重新枚举后旧实例消失，`getDevices()` 不再返回它。M1 的做法是
+`connect` 事件触发自动 `ld`；如果列表为空/不含该设备，页面提示再点一次“授权设备”。这段在真机上的复验
+（按实例失效、按 VID/PID 策略是否仍有效）**待设备恢复后补做**，代码路径已按“会失效、需要重新授权”实现。

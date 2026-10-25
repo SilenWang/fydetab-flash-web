@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>RK3588 WebFlasher · M1（Go/WASM + WebUSB）</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <div class="title">
+        <h1>RK3588 WebFlasher</h1>
+        <p class="subtitle">rockusb over WebUSB · Go/WASM 核心 · M1（ld / cd / sd / db / info）</p>
+      </div>
+      <div class="badges">
+        <span id="mode-badge" class="badge muted" data-mode="none">无设备</span>
+        <span id="core-badge" class="badge muted" data-core="loading">core 加载中</span>
+      </div>
+    </header>
+
+    <section class="banner safety" aria-label="写入范围声明">
+      <strong>只写设备 RAM，不写 flash。</strong>
+      <span>
+        <code>db</code>（Download Boot）只会用 EP0 vendor request（<code>0x40/0x0C</code>，index
+        <code>0x0471</code>/<code>0x0472</code>）把<strong>你本地选择的 loader</strong> 分块写进 maskrom 的 RAM；
+        本阶段没有 <code>uf</code>、没有擦除、没有 flash 写入、没有复位。loader 由你提供，工具不分发。
+      </span>
+    </section>
+
+    <div id="banner" class="banner warn" hidden></div>
+
+    <main class="layout">
+      <div class="column">
+        <section class="panel">
+          <h2>1 · 设备</h2>
+          <div class="controls">
+            <button id="btn-authorize" type="button" class="primary">授权设备</button>
+            <button id="btn-refresh" type="button">刷新（ld）</button>
+            <label class="toggle">
+              <input id="chk-mock" type="checkbox" />
+              演示模式（mock 设备）
+            </label>
+          </div>
+          <p class="hint">
+            首次使用点“授权设备”，在浏览器弹窗里选 <code>0x2207</code> 设备。设备重新枚举（maskrom → loader）后浏览器会撤销按实例的授权，
+            需要再次点授权；页面会在 <code>connect</code> 事件后自动重新 <code>ld</code>。
+          </p>
+          <div id="devices" class="devices"></div>
+        </section>
+
+        <section class="panel">
+          <h2>2 · loader（本地文件）</h2>
+          <div class="controls">
+            <label class="file">
+              <input id="file-loader" type="file" accept=".bin,application/octet-stream" />
+              <span id="file-label">选择 loader…</span>
+            </label>
+            <button id="btn-demo-loader" type="button" hidden>载入演示 loader</button>
+            <button id="btn-db" type="button" class="primary">Download Boot（db）</button>
+          </div>
+          <p class="hint">
+            需要 RK3588 的 RKBOOT loader，例如 <code>rk3588_spl_loader_v1.06.111.bin</code>（约 140 KiB）。
+            选择后立即在本地校验 tag / CRC-32 / 段表 / 芯片，不会联网、不会上传。
+          </p>
+          <pre id="loader-summary" class="summary">尚未选择 loader。</pre>
+        </section>
+
+        <section class="panel">
+          <h2>3 · 命令</h2>
+          <form id="command-form" class="command">
+            <span class="prompt">›</span>
+            <input id="command-input" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="ld | desc | cd <n> | sd <n> | db | info [chip|flash|cap|storage] | help" />
+            <button type="submit" class="primary">运行</button>
+          </form>
+          <div class="quick">
+            <button type="button" data-command="ld">ld</button>
+            <button type="button" data-command="desc">desc</button>
+            <button type="button" data-command="cd 1">cd 1</button>
+            <button type="button" data-command="sd 1">sd 1</button>
+            <button type="button" data-command="info">info</button>
+            <button type="button" data-command="help">help</button>
+            <button id="btn-clear" type="button">清空输出</button>
+          </div>
+          <pre id="terminal" class="terminal" aria-live="polite"></pre>
+        </section>
+      </div>
+
+      <div class="column">
+        <section class="panel">
+          <h2>状态</h2>
+          <div id="state-panel" class="state"></div>
+        </section>
+
+        <section class="panel">
+          <h2>只读信息（LOADER 态）</h2>
+          <div id="info-panel" class="info"><p class="muted">尚未读取。maskrom 下请先 Download Boot。</p></div>
+        </section>
+
+        <section class="panel">
+          <h2>传输记录</h2>
+          <p id="trace-count" class="hint">0 条</p>
+          <div class="table-wrap">
+            <table class="grid">
+              <thead>
+                <tr>
+                  <th>#</th><th>类型</th><th>命令 / stage</th><th>长度</th><th>ms</th><th>状态</th><th>数据</th>
+                </tr>
+              </thead>
+              <tbody id="trace-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>错误</h2>
+          <div id="errors" class="errors"><p class="muted">没有错误。</p></div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="page-footer">
+      <p>
+        协议来自 Rockchip 的 GPL-2.0
+        <a href="https://github.com/rockchip-linux/rkdeveloptool" rel="noreferrer">rkdeveloptool</a>
+        （<code>RKComm.cpp</code> 的 <code>RKU_DeviceRequest</code> 与 <code>RKDevice::DownloadBoot</code>）；实现见
+        <code>internal/rockusb</code>、<code>internal/device</code>、<code>cmd/wasm</code>。本仓库以 GPL-2.0 发布，
+        不包含 <code>upgrade_tool</code> 二进制，也不分发任何 Rockchip loader blob。
+      </p>
+    </footer>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,230 @@
+{
+  "schema": "rk3588-webflasher/trace@1",
+  "readOnly": true,
+  "exportedAt": "2026-10-25T04:04:45.775Z",
+  "probe": {
+    "version": "0.1.0",
+    "protocol": "rockusb/M0-readonly",
+    "exportedAt": "2026-10-25T04:04:45.775Z",
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+    "secureContext": true,
+    "origin": "http://localhost:5173",
+    "commandTable": [
+      {
+        "op": 0,
+        "name": "RKU_TestDeviceReady",
+        "transferLength": 0,
+        "dataLength": 0,
+        "allowShort": false,
+        "description": "询问设备是否就绪（只读取状态）"
+      },
+      {
+        "op": 27,
+        "name": "RKU_ReadChipInfo",
+        "transferLength": 16,
+        "dataLength": 16,
+        "allowShort": false,
+        "description": "读取芯片型号字符串（16 字节 ASCII）"
+      },
+      {
+        "op": 26,
+        "name": "RKU_ReadFlashInfo",
+        "transferLength": 11,
+        "dataLength": 11,
+        "allowShort": true,
+        "description": "读取 flash 容量/块大小/页大小/ECC/厂商/片选"
+      },
+      {
+        "op": 170,
+        "name": "RKU_ReadCapability",
+        "transferLength": 8,
+        "dataLength": 8,
+        "allowShort": false,
+        "description": "读取固件能力位（Direct LBA、Vendor Storage 等）"
+      },
+      {
+        "op": 43,
+        "name": "RKU_ReadStorageList",
+        "transferLength": 4,
+        "dataLength": 4,
+        "allowShort": false,
+        "description": "读取可用存储介质位图及当前介质"
+      }
+    ]
+  },
+  "device": {
+    "vendorId": "0x2207",
+    "productId": "0x350b",
+    "bcdUSB": "0x0200",
+    "usbVersion": "2.0.0",
+    "mode": "MASKROM"
+  },
+  "link": {
+    "interfaceNumber": 0,
+    "alternateSetting": 0,
+    "interfaceClass": 255,
+    "bulkIn": 1,
+    "bulkOut": 2
+  },
+  "transfers": [
+    {
+      "seq": 1,
+      "tMs": 14.55,
+      "kind": "bulk-out",
+      "endpoint": 2,
+      "direction": "out",
+      "requestType": null,
+      "request": null,
+      "value": null,
+      "index": null,
+      "requestedLength": 31,
+      "length": 31,
+      "status": "error",
+      "dataHex": "55 53 42 43 0f 44 51 ed 00 00 00 00 80 00 06 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "dataSummary": "55 53 42 43 0f 44 51 ed 00 00 00 00 80 00 06 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 (31 bytes)",
+      "durationMs": 0.645,
+      "op": 0,
+      "opName": "RKU_TestDeviceReady",
+      "stage": "cbw",
+      "note": "CBW tag=0xed51440f"
+    },
+    {
+      "seq": 2,
+      "tMs": 15.2,
+      "kind": "bulk-out",
+      "endpoint": 2,
+      "direction": "out",
+      "requestType": null,
+      "request": null,
+      "value": null,
+      "index": null,
+      "requestedLength": 31,
+      "length": 31,
+      "status": "error",
+      "dataHex": "55 53 42 43 f3 1e ea 62 10 00 00 00 80 00 06 1b 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "dataSummary": "55 53 42 43 f3 1e ea 62 10 00 00 00 80 00 06 1b 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 (31 bytes)",
+      "durationMs": 0.135,
+      "op": 27,
+      "opName": "RKU_ReadChipInfo",
+      "stage": "cbw",
+      "note": "CBW tag=0x62ea1ef3"
+    },
+    {
+      "seq": 3,
+      "tMs": 15.63,
+      "kind": "bulk-out",
+      "endpoint": 2,
+      "direction": "out",
+      "requestType": null,
+      "request": null,
+      "value": null,
+      "index": null,
+      "requestedLength": 31,
+      "length": 31,
+      "status": "error",
+      "dataHex": "55 53 42 43 04 ee 90 55 0b 00 00 00 80 00 06 1a 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "dataSummary": "55 53 42 43 04 ee 90 55 0b 00 00 00 80 00 06 1a 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 (31 bytes)",
+      "durationMs": 0.115,
+      "op": 26,
+      "opName": "RKU_ReadFlashInfo",
+      "stage": "cbw",
+      "note": "CBW tag=0x5590ee04"
+    },
+    {
+      "seq": 4,
+      "tMs": 16.125,
+      "kind": "bulk-out",
+      "endpoint": 2,
+      "direction": "out",
+      "requestType": null,
+      "request": null,
+      "value": null,
+      "index": null,
+      "requestedLength": 31,
+      "length": 31,
+      "status": "error",
+      "dataHex": "55 53 42 43 49 e7 7e ed 08 00 00 00 80 00 06 aa 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "dataSummary": "55 53 42 43 49 e7 7e ed 08 00 00 00 80 00 06 aa 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 (31 bytes)",
+      "durationMs": 0.115,
+      "op": 170,
+      "opName": "RKU_ReadCapability",
+      "stage": "cbw",
+      "note": "CBW tag=0xed7ee749"
+    },
+    {
+      "seq": 5,
+      "tMs": 16.725,
+      "kind": "bulk-out",
+      "endpoint": 2,
+      "direction": "out",
+      "requestType": null,
+      "request": null,
+      "value": null,
+      "index": null,
+      "requestedLength": 31,
+      "length": 31,
+      "status": "error",
+      "dataHex": "55 53 42 43 f2 b1 b0 e9 04 00 00 00 80 00 06 2b 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "dataSummary": "55 53 42 43 f2 b1 b0 e9 04 00 00 00 80 00 06 2b 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 (31 bytes)",
+      "durationMs": 0.145,
+      "op": 43,
+      "opName": "RKU_ReadStorageList",
+      "stage": "cbw",
+      "note": "CBW tag=0xe9b0b1f2"
+    }
+  ],
+  "errors": [
+    {
+      "atMs": 14.735,
+      "code": -3,
+      "name": "ERR_DEVICE_WRITE_FAILED",
+      "detail": "ERR_DEVICE_WRITE_FAILED: RKU_TestDeviceReady bulk OUT failed: Failed to execute 'transferOut' on 'USBDevice': A transfer error has occurred.",
+      "context": "RKU_TestDeviceReady"
+    },
+    {
+      "atMs": 15.235,
+      "code": -3,
+      "name": "ERR_DEVICE_WRITE_FAILED",
+      "detail": "ERR_DEVICE_WRITE_FAILED: RKU_ReadChipInfo bulk OUT failed: Failed to execute 'transferOut' on 'USBDevice': A transfer error has occurred.",
+      "context": "RKU_ReadChipInfo"
+    },
+    {
+      "atMs": 15.67,
+      "code": -3,
+      "name": "ERR_DEVICE_WRITE_FAILED",
+      "detail": "ERR_DEVICE_WRITE_FAILED: RKU_ReadFlashInfo bulk OUT failed: Failed to execute 'transferOut' on 'USBDevice': A transfer error has occurred.",
+      "context": "RKU_ReadFlashInfo"
+    },
+    {
+      "atMs": 16.155,
+      "code": -3,
+      "name": "ERR_DEVICE_WRITE_FAILED",
+      "detail": "ERR_DEVICE_WRITE_FAILED: RKU_ReadCapability bulk OUT failed: Failed to execute 'transferOut' on 'USBDevice': A transfer error has occurred.",
+      "context": "RKU_ReadCapability"
+    },
+    {
+      "atMs": 16.77,
+      "code": -3,
+      "name": "ERR_DEVICE_WRITE_FAILED",
+      "detail": "ERR_DEVICE_WRITE_FAILED: RKU_ReadStorageList bulk OUT failed: Failed to execute 'transferOut' on 'USBDevice': A transfer error has occurred.",
+      "context": "RKU_ReadStorageList"
+    }
+  ],
+  "counts": {
+    "transfers": 5,
+    "commands": 5,
+    "failedCommands": 5,
+    "errors": 5
+  },
+  "zeroWriteAssertions": {
+    "bulkOutTransfers": 5,
+    "bulkOutLengths": [
+      31
+    ],
+    "bulkOutAllCbw": true,
+    "bulkOutOpsWhitelisted": true,
+    "successfulTransfers": 0,
+    "dataPayloadOutTransfers": 0,
+    "note": "All 5 outbound transfers are 31-byte CBWs for the whitelisted read opcodes; every one was rejected by the device (USB transfer error), so the device accepted 0 bytes. No bulk-out carried a data payload."
+  }
+}

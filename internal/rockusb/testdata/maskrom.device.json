@@ -1,0 +1,185 @@
+{
+  "schema": "rk3588-webflasher/device@1",
+  "readOnly": true,
+  "collectedAt": "2026-10-25T04:04:45.775Z",
+  "source": "web/probe page export (probe-export.json) on real hardware",
+  "target": "Fydetab Duo / RK3588 — USB 2207:350b, Maskrom",
+  "mode": "MASKROM",
+  "usbDescriptor": {
+    "vendorId": "0x2207",
+    "productId": "0x350b",
+    "vendorIdDecimal": 8711,
+    "productIdDecimal": 13579,
+    "manufacturerName": null,
+    "productName": null,
+    "serialNumber": null,
+    "bcdUSB": "0x0200",
+    "usbVersion": "2.0.0",
+    "bcdUSBLowBit": 0,
+    "mode": "MASKROM",
+    "deviceVersion": "1.0.0",
+    "deviceClass": 0,
+    "deviceSubclass": 0,
+    "deviceProtocol": 0,
+    "configurations": [
+      {
+        "configurationValue": 1,
+        "configurationName": null,
+        "interfaces": [
+          {
+            "interfaceNumber": 0,
+            "alternates": [
+              {
+                "alternateSetting": 0,
+                "interfaceClass": 255,
+                "interfaceSubclass": 6,
+                "interfaceProtocol": 5,
+                "interfaceName": null,
+                "endpoints": [
+                  {
+                    "endpointNumber": 1,
+                    "direction": "in",
+                    "type": "bulk",
+                    "packetSize": 512,
+                    "address": "0x81"
+                  },
+                  {
+                    "endpointNumber": 2,
+                    "direction": "out",
+                    "type": "bulk",
+                    "packetSize": 512,
+                    "address": "0x02"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "activeConfiguration": {
+      "configurationValue": 1,
+      "configurationName": null,
+      "interfaces": [
+        {
+          "interfaceNumber": 0,
+          "alternates": [
+            {
+              "alternateSetting": 0,
+              "interfaceClass": 255,
+              "interfaceSubclass": 6,
+              "interfaceProtocol": 5,
+              "interfaceName": null,
+              "endpoints": [
+                {
+                  "endpointNumber": 1,
+                  "direction": "in",
+                  "type": "bulk",
+                  "packetSize": 512,
+                  "address": "0x81"
+                },
+                {
+                  "endpointNumber": 2,
+                  "direction": "out",
+                  "type": "bulk",
+                  "packetSize": 512,
+                  "address": "0x02"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "opened": true
+  },
+  "link": {
+    "interfaceNumber": 0,
+    "alternateSetting": 0,
+    "interfaceClass": 255,
+    "bulkIn": 1,
+    "bulkOut": 2
+  },
+  "chipInfo": null,
+  "flashInfo": null,
+  "capability": null,
+  "storage": null,
+  "gpt": null,
+  "commands": [
+    {
+      "op": 0,
+      "opName": "RKU_TestDeviceReady",
+      "description": "询问设备是否就绪（只读取状态）",
+      "ok": false,
+      "errorCode": -3,
+      "errorName": "ERR_DEVICE_WRITE_FAILED",
+      "errorDetail": "ERR_DEVICE_WRITE_FAILED: RKU_TestDeviceReady bulk OUT failed: Failed to execute 'transferOut' on 'USBDevice': A transfer error has occurred.",
+      "dataHex": null,
+      "decoded": null,
+      "csw": null,
+      "durationMs": 1.115
+    },
+    {
+      "op": 27,
+      "opName": "RKU_ReadChipInfo",
+      "description": "读取芯片型号字符串（16 字节 ASCII）",
+      "ok": false,
+      "errorCode": -3,
+      "errorName": "ERR_DEVICE_WRITE_FAILED",
+      "errorDetail": "ERR_DEVICE_WRITE_FAILED: RKU_ReadChipInfo bulk OUT failed: Failed to execute 'transferOut' on 'USBDevice': A transfer error has occurred.",
+      "dataHex": null,
+      "decoded": null,
+      "csw": null,
+      "durationMs": 0.195
+    },
+    {
+      "op": 26,
+      "opName": "RKU_ReadFlashInfo",
+      "description": "读取 flash 容量/块大小/页大小/ECC/厂商/片选",
+      "ok": false,
+      "errorCode": -3,
+      "errorName": "ERR_DEVICE_WRITE_FAILED",
+      "errorDetail": "ERR_DEVICE_WRITE_FAILED: RKU_ReadFlashInfo bulk OUT failed: Failed to execute 'transferOut' on 'USBDevice': A transfer error has occurred.",
+      "dataHex": null,
+      "decoded": null,
+      "csw": null,
+      "durationMs": 0.175
+    },
+    {
+      "op": 170,
+      "opName": "RKU_ReadCapability",
+      "description": "读取固件能力位（Direct LBA、Vendor Storage 等）",
+      "ok": false,
+      "errorCode": -3,
+      "errorName": "ERR_DEVICE_WRITE_FAILED",
+      "errorDetail": "ERR_DEVICE_WRITE_FAILED: RKU_ReadCapability bulk OUT failed: Failed to execute 'transferOut' on 'USBDevice': A transfer error has occurred.",
+      "dataHex": null,
+      "decoded": null,
+      "csw": null,
+      "durationMs": 0.17
+    },
+    {
+      "op": 43,
+      "opName": "RKU_ReadStorageList",
+      "description": "读取可用存储介质位图及当前介质",
+      "ok": false,
+      "errorCode": -3,
+      "errorName": "ERR_DEVICE_WRITE_FAILED",
+      "errorDetail": "ERR_DEVICE_WRITE_FAILED: RKU_ReadStorageList bulk OUT failed: Failed to execute 'transferOut' on 'USBDevice': A transfer error has occurred.",
+      "dataHex": null,
+      "decoded": null,
+      "csw": null,
+      "durationMs": 0.195
+    }
+  ],
+  "unavailable": {
+    "chip_flash_capability_storage_gpt": "MASKROM (bcdUSB bit0=0) rejects the 31-byte CBW bulk OUT with a USB transfer error before any data stage, so none of these can be read in maskrom. The stock upgrade_tool fails identically (RKU_Write err=-1) for TD/RCI. A Download Boot (db, RAM-only usbplug download) is required first; that step is out of scope for this zero-write run.",
+    "evidence": "trace.json transfers 1-5; upgrade_tool-baseline.txt"
+  },
+  "vendorToolBaseline": {
+    "command": "/mnt/raid/openfyde/rk3588-image-maker/Linux_Upgrade_Tool/upgrade_tool",
+    "ld": "DevNo=1 Vid=0x2207,Pid=0x350b,LocationID=32 Mode=Maskrom",
+    "rci": "Read Chip Info Fail! (log: Error:RKU_Write failed,err=-1)",
+    "td": "Test Device Fail! (log: Error:RKU_Write failed,err=-1)"
+  }
+}
