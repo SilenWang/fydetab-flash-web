@@ -104,7 +104,10 @@ test('ufVerify reports structure and both full scans on a good image', async (t)
     assert.ok(res.report.items.length > 0);
     assert.equal(res.md5, undefined, 'a quick verify must not claim an MD5 result');
     assert.equal(res.rkafCrc, undefined, 'a quick verify must not claim an RKAF CRC result');
-    assert.equal(res.parameterCrc ?? null, null, 'the demo fixture has no PARM CRC trailer');
+    // The PARM block is small, so even a quick verify checks its CRC. Only the
+    // full-image scans (MD5, RKAF CRC) are skipped.
+    assert.ok(res.parameterCrc, 'a quick verify still checks the cheap PARM CRC');
+    assert.equal(res.parameterCrc.ok, true, 'the demo fixture PARM CRC must verify');
   });
 
   await t.test('the throughput sample measures this machine and this image', async () => {
