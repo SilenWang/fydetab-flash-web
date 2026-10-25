@@ -58,8 +58,8 @@ func TestR132DryRunContainer(t *testing.T) {
 	if got, want := rep.Container.RKAFLengthField, uint32(4053098496); got != want {
 		t.Errorf("rkaf length field = %d, want %d", got, want)
 	}
-	if rep.Container.LengthWrapped {
-		t.Error("LengthWrapped = true; r132's length field does not wrap")
+	if !rep.Container.LengthWrapped {
+		t.Error("LengthWrapped = false; the item table carries 64-bit high words beyond the 32-bit length field")
 	}
 	if got, want := rep.Parameter.PartitionCount, 12; got != want {
 		t.Errorf("parameter partitions = %d, want %d", got, want)
@@ -67,9 +67,10 @@ func TestR132DryRunContainer(t *testing.T) {
 	if got, want := rep.Parameter.ContentBytes, 578; got != want {
 		t.Errorf("parameter content = %d bytes, want %d", got, want)
 	}
-	// The 4 GiB of trailing padding must be reported, not swallowed.
-	if !hasWarning(rep.Warnings, "after the RKAF archive") {
-		t.Errorf("warnings = %v, want one about the trailing padding", rep.Warnings)
+	// The 32-bit length field holds the low half; the real archive continues
+	// past it. The parser must say so instead of inventing 4 GiB of padding.
+	if !hasWarning(rep.Warnings, "recovered the true body length") {
+		t.Errorf("warnings = %v, want one about the recovered body length", rep.Warnings)
 	}
 }
 
@@ -96,26 +97,13 @@ func TestR132DryRunPartitions(t *testing.T) {
 	if got, want := state.SizeBytes, int64(5368764928); got != want {
 		t.Errorf("STATE size = %d bytes, want %d (5 GiB)", got, want)
 	}
-	if got, want := state.PayloadBytes, int64(1073797632); got != want {
-		t.Errorf("STATE payload = %d bytes, want %d (1 GiB)", got, want)
+	// The image carries the full 5 GiB STATE payload (its 64-bit size high
+	// word is 1); there is no 4 GiB uncovered tail.
+	if got, want := state.PayloadBytes, int64(5368764928); got != want {
+		t.Errorf("STATE payload = %d bytes, want %d (full 5 GiB partition)", got, want)
 	}
-
-	// STATE: 5 GiB partition, 1 GiB payload -> the 4 GiB tail is uncovered and
-	// must show up as such instead of being silently written or erased.
-	if got, want := state.UncoveredBytes, int64(4294965760); got != want {
+	if got, want := state.UncoveredBytes, int64(0); got != want {
 		t.Errorf("STATE uncovered = %d bytes, want %d", got, want)
-	}
-	var stateRange *UncoveredRange
-	for i := range rep.Uncovered {
-		if rep.Uncovered[i].Partition == "STATE" {
-			stateRange = &rep.Uncovered[i]
-		}
-	}
-	if stateRange == nil {
-		t.Fatalf("no uncovered range for STATE; got %v", rep.Uncovered)
-	}
-	if got, want := stateRange.FirstLBA, uint64(13639856); got != want {
-		t.Errorf("STATE uncovered starts at LBA %d, want %d", got, want)
 	}
 
 	// Partitions that only get a GPT entry, no payload item in the image.
@@ -135,7 +123,7 @@ func TestR132DryRunPartitions(t *testing.T) {
 		if got, want := p.SizeBytes, int64(16777216); got != want {
 			t.Errorf("resource size = %d, want %d", got, want)
 		}
-		if got, want := p.UncoveredBytes, int64(15853568); got != want {
+		if got, want := p.UncoveredBytes, int64(15854080); got != want {
 			t.Errorf("resource uncovered = %d, want %d", got, want)
 		}
 	}
@@ -154,8 +142,8 @@ func TestR132DryRunStages(t *testing.T) {
 			gpt = &rep.Stages[i]
 		case "wl":
 			wl++
-			if rep.Stages[i].Name == "STATE" && rep.Stages[i].Bytes != 1073799168 {
-				t.Errorf("STATE write stage = %d bytes, want the 1073799168-byte archive slot", rep.Stages[i].Bytes)
+			if rep.Stages[i].Name == "STATE" && rep.Stages[i].Bytes != 5368764928 {
+				t.Errorf("STATE write stage = %d bytes, want the full 5368764928-byte payload", rep.Stages[i].Bytes)
 			}
 		}
 	}

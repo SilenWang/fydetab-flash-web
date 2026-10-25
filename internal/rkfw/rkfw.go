@@ -165,16 +165,24 @@ type Item struct {
 	Name     string // parameter partition name, e.g. "parameter", "boot"
 	Filename string // path inside the packaging tree, e.g. "Image/boot.img"
 	NandSize uint32 // sectors; NoAddress for a grow/unknown partition
-	Pos      uint32 // offset of the payload inside the RKAF archive
+	Pos      uint32 // low 32 bits of the payload offset inside the RKAF archive
 	NandAddr uint32 // target flash offset in sectors; NoAddress if unknown
-	// Size is the payload length in bytes, from the "+108" field.
+	// Size is the low 32 bits of the payload length in bytes (the "+108" field).
 	Size uint32
+	// Pos64 and Size64 extend Pos/Size to 64 bits. The packer stores the high
+	// words in unused bytes of the 60-byte `file` field: file[50]=='H' marks a
+	// 64-bit offset (high word at file[51:55]) and file[55]=='H' marks a
+	// 64-bit size (high word at file[56:60]). The openFyde v23 image uses this
+	// for every item after the 5 GiB STATE payload. Ignoring the markers reads
+	// the wrong bytes (and under-writes STATE by 4 GiB).
+	Pos64  uint64
+	Size64 uint64
 	// PaddedSize is the number of archive bytes this item covers: from Pos to
 	// the next item's Pos, or to the end of the archive body for the last
 	// item. It is derived from the item table's own offsets because the on-disk
 	// "+104" field is not a byte count (see PaddedBlocks). Zero for reserved
 	// items.
-	PaddedSize uint32
+	PaddedSize uint64
 	// PaddedBlocks is the on-disk "+104" field verbatim. It counts 2 KiB
 	// pages: on openFyde r132 it equals PaddedSize/PageSize for every item
 	// except STATE, where it records the 5 GiB partition capacity instead of
@@ -190,11 +198,10 @@ func (it Item) Reserved() bool {
 }
 
 // HasData reports whether the entry has readable payload bytes in the archive.
-func (it Item) HasData() bool { return !it.Reserved() && it.Size > 0 }
+func (it Item) HasData() bool { return !it.Reserved() && it.Size64 > 0 }
 
-// End returns Pos+PaddedSize as a 64-bit value; a u32 end would wrap for
-// payloads that cross the 4 GiB boundary.
-func (it Item) End() uint64 { return uint64(it.Pos) + uint64(it.PaddedSize) }
+// End returns the end of the item's archive slot as a 64-bit value.
+func (it Item) End() uint64 { return it.Pos64 + it.PaddedSize }
 
 // Image is a parsed Rockchip update image. All fields are read-only metadata;
 // use ItemReader or ReadItem to stream payload bytes.
@@ -338,6 +345,27 @@ func OpenReaderAt(r io.ReaderAt, size int64, name string) (*Image, error) {
 	if hasContainerLen {
 		containerLen = uint64(img.RKFW.ImageLength) - 4
 	}
+	// A 64-bit item offset/size in the file field means the archive body can
+	// exceed 4 GiB even when both 32-bit length fields agree (they hold the
+	// wrapped low part). Compute the highest item end first and recover the
+	// true body length from it instead of trusting the stored value.
+	var maxItemEnd uint64
+	hasHigh := false
+	for _, it := range items {
+		if it.Reserved() || it.Size64 == 0 {
+			continue
+		}
+		if it.Pos64 > 0xFFFFFFFF || it.Size64 > 0xFFFFFFFF {
+			hasHigh = true
+		}
+		if end := it.Pos64 + it.Size64; end > maxItemEnd {
+			maxItemEnd = end
+		}
+	}
+	forcedWrap := hasHigh && maxItemEnd > stored
+	if forcedWrap {
+		stored = maxItemEnd
+	}
 	bodyLen, wrapped := stored, false
 	if stored == 0 {
 		bodyLen = recoverTrueLength(containerLen, uint64(available))
@@ -350,6 +378,9 @@ func OpenReaderAt(r io.ReaderAt, size int64, name string) (*Image, error) {
 	if bodyLen == 0 {
 		return nil, fmt.Errorf("rkfw: RKAF archive at 0x%x has a zero length field", rkafOffset)
 	}
+	if forcedWrap {
+		wrapped = true
+	}
 	if bodyLen > uint64(available) {
 		return nil, fmt.Errorf("rkfw: RKAF body needs 0x%x bytes but only 0x%x are present after offset 0x%x (truncated image)",
 			bodyLen, uint64(available), rkafOffset)
@@ -359,7 +390,7 @@ func OpenReaderAt(r io.ReaderAt, size int64, name string) (*Image, error) {
 		img.warnf("RKAF 32-bit length field holds 0x%x; recovered the true body length 0x%x from the file layout (>4 GiB wrap)",
 			arch.Length, bodyLen)
 	}
-	if img.HasRKFW && img.RKFW.ImageLength != 0 {
+	if img.HasRKFW && img.RKFW.ImageLength != 0 && !wrapped {
 		if got, want := img.RKFW.ImageLength, uint32(bodyLen+4); got != want {
 			img.warnf("RKFW image_length 0x%x disagrees with the RKAF-derived length 0x%x (0x%x incl. trailer); using the RKAF length",
 				got, bodyLen, bodyLen+4)
@@ -443,14 +474,25 @@ func parseArchive(b []byte) (Archive, []Item, error) {
 	for i := range items {
 		off := 140 + i*RKAFItemSize
 		p := b[off : off+RKAFItemSize]
+		file := p[32:92]
+		highWord := func(marker, word int) uint64 {
+			if file[marker] == 'H' {
+				return uint64(le.Uint32(file[word : word+4]))
+			}
+			return 0
+		}
+		pos := le.Uint32(p[96:100])
+		size := le.Uint32(p[108:112])
 		items[i] = Item{
 			Name:         cstring(p[0:32]),
-			Filename:     cstring(p[32:92]),
+			Filename:     cstring(file),
 			NandSize:     le.Uint32(p[92:96]),
-			Pos:          le.Uint32(p[96:100]),
+			Pos:          pos,
 			NandAddr:     le.Uint32(p[100:104]),
 			PaddedBlocks: le.Uint32(p[104:108]),
-			Size:         le.Uint32(p[108:112]),
+			Size:         size,
+			Pos64:        highWord(50, 51)<<32 | uint64(pos),
+			Size64:       highWord(55, 56)<<32 | uint64(size),
 		}
 	}
 	return a, items, nil
@@ -474,37 +516,33 @@ func validateItems(items []Item, bodyLen uint64, img *Image) error {
 			}
 			continue
 		}
-		if it.Size == 0 {
+		if it.Size64 == 0 {
 			img.warnf("item %q has zero payload size; it will not be written", it.Name)
 			continue
 		}
-		if uint64(it.Pos) < RKAFHeaderSize {
+		if it.Pos64 < RKAFHeaderSize {
 			return fmt.Errorf("rkfw: item %q payload starts at 0x%x, inside the %d-byte RKAF header",
-				it.Name, it.Pos, RKAFHeaderSize)
+				it.Name, it.Pos64, RKAFHeaderSize)
 		}
 		if it.End() > bodyLen {
 			return fmt.Errorf("rkfw: item %q payload range [0x%x,0x%x) exceeds the RKAF body end 0x%x (truncated file or corrupt item table)",
-				it.Name, it.Pos, it.End(), bodyLen)
+				it.Name, it.Pos64, it.End(), bodyLen)
 		}
 		// The payload must fit inside the slot the item table gives it. The
 		// on-disk "+104" field is not the slot length (it counts 2 KiB pages,
 		// and for a partition larger than its payload it describes the
 		// partition), so the slot comes from the neighbouring item offsets.
-		if it.Size > it.PaddedSize {
+		if it.Size64 > it.PaddedSize {
 			return fmt.Errorf("rkfw: item %q payload is 0x%x bytes but its archive slot is only 0x%x bytes (payload would run into the next item)",
-				it.Name, it.Size, it.PaddedSize)
+				it.Name, it.Size64, it.PaddedSize)
 		}
 		if it.PaddedSize%SectorSize != 0 {
 			img.warnf("item %q archive slot 0x%x is not a multiple of the %d-byte sector", it.Name, it.PaddedSize, SectorSize)
 		}
-		if it.Pos%SectorSize != 0 {
-			img.warnf("item %q payload starts at 0x%x, which is not %d-byte aligned", it.Name, it.Pos, SectorSize)
+		if it.Pos64%SectorSize != 0 {
+			img.warnf("item %q payload starts at 0x%x, which is not %d-byte aligned", it.Name, it.Pos64, SectorSize)
 		}
-		if it.End() > 1<<32 {
-			img.warnf("item %q ends at 0x%x, past the 4 GiB boundary; 32-bit RKAF offsets cannot describe payloads that large",
-				it.Name, it.End())
-		}
-		spans = append(spans, span{uint64(it.Pos), it.End(), it.Name})
+		spans = append(spans, span{it.Pos64, it.End(), it.Name})
 	}
 
 	sort.Slice(spans, func(i, j int) bool {
@@ -546,21 +584,24 @@ func assignSlots(items []Item, bodyLen uint64, img *Image) {
 			if j == i || items[j].Reserved() {
 				continue
 			}
-			if next := uint64(items[j].Pos); next > uint64(it.Pos) && next < end {
+			if next := items[j].Pos64; next > it.Pos64 && next < end {
 				end = next
 			}
 		}
-		if uint64(it.Pos) >= end {
+		if it.Pos64 >= end {
 			img.warnf("item %q starts at 0x%x, at or past the next item / archive end 0x%x; it has no room in the archive",
-				it.Name, it.Pos, end)
+				it.Name, it.Pos64, end)
 			continue
 		}
-		slot := end - uint64(it.Pos)
-		if slot > 1<<32-1 {
-			img.warnf("item %q archive slot 0x%x exceeds 4 GiB; clamping to the 32-bit field range", it.Name, slot)
-			slot = 1<<32 - 1
+		slot := end - it.Pos64
+		// A 64-bit offset can leave a hole between items (for example when the
+		// packer advances by a partition's full size). Do not count that hole
+		// as part of this item's slot: only the payload plus a small alignment
+		// pad is read from the image.
+		if slot > it.Size64+(1<<20) {
+			slot = (it.Size64 + SectorSize - 1) / SectorSize * SectorSize
 		}
-		it.PaddedSize = uint32(slot)
+		it.PaddedSize = slot
 	}
 }
 
@@ -599,7 +640,7 @@ func recoverTrueLength(stored, available uint64) uint64 {
 
 // ItemOffset is the absolute file offset of an item's payload.
 func (img *Image) ItemOffset(it Item) int64 {
-	return img.RKAFOffset + int64(it.Pos)
+	return img.RKAFOffset + int64(it.Pos64)
 }
 
 // ReaderAt returns the byte source this image was parsed from. It is what uf's
@@ -616,7 +657,7 @@ func (img *Image) ItemReader(it Item) (*io.SectionReader, func() error, error) {
 	if !it.HasData() {
 		return nil, nil, fmt.Errorf("rkfw: item %q has no payload in the archive", it.Name)
 	}
-	r := io.NewSectionReader(img.ReaderAt(), img.ItemOffset(it), int64(it.Size))
+	r := io.NewSectionReader(img.ReaderAt(), img.ItemOffset(it), int64(it.Size64))
 	return r, func() error { return nil }, nil
 }
 
@@ -626,10 +667,10 @@ func (img *Image) ReadItem(it Item, maxBytes int64) ([]byte, error) {
 	if !it.HasData() {
 		return nil, fmt.Errorf("rkfw: item %q has no payload in the archive", it.Name)
 	}
-	if maxBytes > 0 && int64(it.Size) > maxBytes {
-		return nil, fmt.Errorf("rkfw: item %q is %d bytes, above the %d-byte limit", it.Name, it.Size, maxBytes)
+	if maxBytes > 0 && int64(it.Size64) > maxBytes {
+		return nil, fmt.Errorf("rkfw: item %q is %d bytes, above the %d-byte limit", it.Name, it.Size64, maxBytes)
 	}
-	buf := make([]byte, it.Size)
+	buf := make([]byte, it.Size64)
 	if err := readAtFull(img.ReaderAt(), buf, img.ItemOffset(it)); err != nil {
 		return nil, fmt.Errorf("rkfw: read item %q: %w", it.Name, err)
 	}

@@ -471,8 +471,6 @@ func verificationLine(v VerificationInfo) string {
 	}
 	if v.RKAFCRC == nil {
 		parts = append(parts, "RKAF CRC n/a")
-	} else if v.RKAFCRC.Unset {
-		parts = append(parts, fmt.Sprintf("RKAF CRC not filled (stored 0x00000000, skipped; computed 0x%08x)", v.RKAFCRC.Computed))
 	} else if v.RKAFCRC.OK {
 		parts = append(parts, fmt.Sprintf("RKAF CRC ok (0x%08x)", v.RKAFCRC.Stored))
 	} else {

@@ -176,7 +176,7 @@ func TestOpenRKFW(t *testing.T) {
 	if got, want := img.Parameter.Name, "parameter"; got != want {
 		t.Fatalf("parameter name = %q", got)
 	}
-	if got, want := img.Items[1].PaddedSize, uint32(1024); got != want {
+	if got, want := img.Items[1].PaddedSize, uint64(1024); got != want {
 		t.Fatalf("uboot padded size = %d, want %d", got, want)
 	}
 	if got, want := img.RKAFOffset, int64(HeaderSize+len(loader)); got != want {
@@ -300,7 +300,7 @@ func TestVerifyRKAFCRCTampered(t *testing.T) {
 // Official Rockchip images (openFyde r132, FyeOS v23.0-SP1) carry a zero RKAF
 // CRC trailer. That means "not filled in", so verification must not refuse to
 // write such an image; the MD5 and PARM CRC checks still run.
-func TestVerifyRKAFCRCUnset(t *testing.T) {
+func TestVerifyRKAFCRCZeroTrailerIsMismatch(t *testing.T) {
 	path, _, _, _, _ := fixtureImage(t)
 	img, err := Open(path)
 	if err != nil {
@@ -328,11 +328,14 @@ func TestVerifyRKAFCRCUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VerifyRKAFCRC: %v", err)
 	}
-	if !crc.Unset {
-		t.Fatal("zero trailer must be reported as unset")
+	if crc.OK {
+		t.Fatal("a zero CRC trailer must not be accepted as valid")
 	}
-	if !crc.OK {
-		t.Fatal("an unset trailer must not fail verification")
+	if crc.Stored != 0 {
+		t.Fatalf("stored = 0x%x, want 0", crc.Stored)
+	}
+	if crc.Computed == 0 {
+		t.Fatal("computed CRC is zero; the fixture no longer exercises a real mismatch")
 	}
 	if crc.Computed == 0 {
 		t.Fatal("computed CRC must still be reported")
@@ -643,7 +646,7 @@ func TestReservedItemMarkers(t *testing.T) {
 	if !it.Reserved() || it.HasData() {
 		t.Fatal("partially marked item must be treated as reserved")
 	}
-	it = Item{Name: "boot", Pos: 0x800, Size: 512, PaddedSize: 512}
+	it = Item{Name: "boot", Pos: 0x800, Pos64: 0x800, Size: 512, Size64: 512, PaddedSize: 512}
 	if it.Reserved() || !it.HasData() {
 		t.Fatal("normal item must have data")
 	}

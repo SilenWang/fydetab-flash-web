@@ -52,8 +52,10 @@ func testImage() *rkfw.Image {
 			NandAddr:   lba,
 			NandSize:   rkfw.NoAddress,
 			Pos:        uint32(pos),
+			Pos64:      uint64(pos),
 			Size:       uint32(size),
-			PaddedSize: uint32(size),
+			Size64:     uint64(size),
+			PaddedSize: uint64(size),
 		})
 		pos += size
 		return items
@@ -209,8 +211,10 @@ func TestBuildReportNoTargetItem(t *testing.T) {
 		NandAddr:   rkfw.NoAddress,
 		NandSize:   rkfw.NoAddress,
 		Pos:        uint32(img.RKAFLength - 4 - size),
+		Pos64:      uint64(img.RKAFLength - 4 - size),
 		Size:       uint32(size),
-		PaddedSize: uint32(size),
+		Size64:     uint64(size),
+		PaddedSize: uint64(size),
 	})
 	rep, err := BuildReport(img, testDocument(t), VerificationInfo{}, Options{})
 	if err != nil {
@@ -291,6 +295,7 @@ func TestBuildReportPayloadOverrun(t *testing.T) {
 		if img.Items[i].Name == "misc" {
 			img.Items[i].PaddedSize = 8 << 20 // partition is 2 MiB
 			img.Items[i].Size = 8 << 20
+			img.Items[i].Size64 = 8 << 20
 		}
 	}
 	rep, err := BuildReport(img, testDocument(t), VerificationInfo{}, Options{})

@@ -33,7 +33,7 @@ type r132ItemWant struct {
 	pos      uint32
 	nandAddr uint32
 	size     uint32
-	slot     uint32
+	slot     uint64
 	field104 uint32 // the +104 field, verbatim
 }
 
@@ -41,8 +41,9 @@ var r132Items = []r132ItemWant{
 	{"package-file", "package-file", 0, 2048, NoAddress, 414, 2048, 1},
 	{"bootloader", "Image/MiniLoaderAll.bin", 0, 4096, NoAddress, 412096, 413696, 202},
 	{"parameter", "Image/parameter.txt", 16384, 417792, 0, 590, 2048, 1},
-	// STATE: the partition is 5 GiB but the payload is 1 GiB.
-	{"STATE", "Image/STATE.img", 10485869, 419840, 11542592, 1073797632, 1073799168, 2621468},
+	// STATE: the 64-bit size high word makes the payload the full 5 GiB
+	// partition (0x1_4000da00), not the low 32 bits (0x4000da00 = 1 GiB).
+	{"STATE", "Image/STATE.img", 10485869, 419840, 11542592, 1073797632, 5368766464, 2621468},
 	{"KERN-A", "Image/KERN-A.img", 65536, 1074219008, 57408, 33554432, 33554432, 16384},
 	{"ROOT-A", "Image/ROOT-A.img", 5578752, 1107773440, 5963840, 2856321024, 2856321024, 1394688},
 	{"OEM", "Image/OEM.img", 32768, 3964094464, 188480, 16777216, 16777216, 8192},
@@ -123,23 +124,21 @@ func TestR132Container(t *testing.T) {
 	if got, want := img.RKAFLengthField, uint32(rkafLength); got != want {
 		t.Errorf("RKAFLengthField = %d, want %d", got, want)
 	}
-	if img.LengthWrapped {
-		t.Error("LengthWrapped = true; this image's length field does not wrap")
+	if !img.LengthWrapped {
+		t.Error("LengthWrapped = false; the 64-bit item offsets extend the archive past the 32-bit length field")
 	}
-	if got, want := img.RKAFLength, int64(imageLength); got != want {
+	if got, want := img.RKAFLength, int64(8348065796); got != want {
 		t.Errorf("RKAFLength = %d, want %d (archive body + 4-byte trailer)", got, want)
 	}
 
-	// The file carries 2^32 bytes of padding after the archive plus the 32-byte
-	// MD5 at EOF. Both are real properties of this image (the source file is
-	// 8,348,478,026 bytes long), so the parser must mention the padding rather
-	// than treat it as archive content.
+	// The file is not padded: the apparent 4 GiB tail is the high half of the
+	// archive (the 5 GiB STATE payload and the items after it).
 	trailing := img.Size - (img.RKAFOffset + img.RKAFLength)
-	if want := int64(1)<<32 + 32; trailing != want {
-		t.Errorf("trailing bytes after the archive = %d, want %d (2^32 padding + the MD5 tail)", trailing, want)
+	if want := int64(32); trailing != want {
+		t.Errorf("trailing bytes after the archive = %d, want %d (the MD5 tail)", trailing, want)
 	}
-	if !hasWarning(img.Warnings, "after the RKAF archive") {
-		t.Errorf("warnings = %v, want one about the trailing padding", img.Warnings)
+	if hasWarning(img.Warnings, "after the RKAF archive") {
+		t.Errorf("warnings = %v, want no trailing-padding warning", img.Warnings)
 	}
 }
 
@@ -294,4 +293,37 @@ func hasWarning(warnings []string, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestR132HighWordOffsetsAndSizes(t *testing.T) {
+	img, _ := r132Image(t)
+	byName := map[string]Item{}
+	for _, it := range img.Items {
+		byName[it.Name] = it
+	}
+	checks := []struct {
+		name string
+		pos  uint64
+		size uint64
+	}{
+		// The +4 GiB high words live in the unused tail of the `file` field.
+		{"STATE", 0x66800, 0x14000da00},
+		{"KERN-A", 0x140074800, 0x2000000},
+		{"ROOT-A", 0x142074800, 0xaa400000},
+		{"uboot", 0x1ed556000, 0x400000},
+		{"EFI-SYSTEM", 0x1ed956000, 0x4000000},
+	}
+	for _, c := range checks {
+		it, ok := byName[c.name]
+		if !ok {
+			t.Errorf("missing item %q", c.name)
+			continue
+		}
+		if it.Pos64 != c.pos {
+			t.Errorf("%s Pos64 = 0x%x, want 0x%x", c.name, it.Pos64, c.pos)
+		}
+		if it.Size64 != c.size {
+			t.Errorf("%s Size64 = 0x%x, want 0x%x", c.name, it.Size64, c.size)
+		}
+	}
 }
