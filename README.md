@@ -172,8 +172,15 @@ pixi run uf --dry-run --json update.img
 - **未覆盖区间**：分区大于镜像 payload 时显式列出，例如 `STATE` 5 GiB / 1 GiB payload
   会标出剩余 4 GiB 不会被写入，且旧内容是否擦除与镜像无关。
 
-格式细节、CRC 算法、32 位长度回绕与尚未核对的假设见
+格式细节、CRC 算法、32 位长度回绕与核对结论见
 [`docs/rkfw-rkaf-format.md`](docs/rkfw-rkaf-format.md)。
+
+M2 的解析器已经用真实镜像核对过一遍：测试机会上唯一的大镜像是 **openFyde r132**
+（sha256 `01fe1c04…42670ecc`），不是官方 v23.0-SP1。它的片段存在
+`internal/testimage/testdata/r132/`，`internal/testimage` 会把片段按绝对偏移装进
+8,348,478,026 B 的稀疏文件，所以 `go test ./...` 跑的是真实布局而不是小号 fixture。
+r132 暴露并已修正的两个坑：RKAF item 的 `+0x68` 是 2 KiB 块计数（不是字节长度），
+以及归档后有 `2^32` 字节 padding 导致 32 位长度不能盲猜回绕。
 
 ## 已知限制（有意留到后续阶段）
 

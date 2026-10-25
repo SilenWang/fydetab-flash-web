@@ -68,7 +68,8 @@ func buildRKAF(t *testing.T, parts []fixturePart) []byte {
 		le.PutUint32(slot[92:96], p.nandSize)
 		le.PutUint32(slot[96:100], pos)
 		le.PutUint32(slot[100:104], p.nandAddr)
-		le.PutUint32(slot[104:108], padded)
+		// "+104" counts 2 KiB pages, not bytes (measured on openFyde r132).
+		le.PutUint32(slot[104:108], (padded+PageSize-1)/PageSize)
 		le.PutUint32(slot[108:112], size)
 
 		payload := make([]byte, padded)
@@ -395,16 +396,40 @@ func TestOpenTruncatedPayload(t *testing.T) {
 }
 
 func TestOpenItemOverrun(t *testing.T) {
-	rkaf := buildRKAF(t, []fixturePart{item("boot", []byte{1, 2, 3, 4})})
-	// Point the item's padded size past the end of the archive.
-	binary.LittleEndian.PutUint32(rkaf[140+104:140+108], 0x7FFF0000)
+	rkaf := buildRKAF(t, []fixturePart{item("boot", []byte{1, 2, 3, 4}), item("uboot", bytes.Repeat([]byte{9}, 512))})
+	// Make the first payload longer than the slot the next item's pos leaves
+	// for it: the payload would run into uboot's data.
+	binary.LittleEndian.PutUint32(rkaf[140+108:140+112], 4096)
 	path := writeTemp(t, appendMD5(buildRKFWBody(nil, rkaf)))
 	_, err := Open(path)
 	if err == nil {
-		t.Fatal("expected an error for an item past the archive end")
+		t.Fatal("expected an error for a payload that outgrows its archive slot")
 	}
-	if !strings.Contains(err.Error(), "exceeds the RKAF body end") {
+	if !strings.Contains(err.Error(), "archive slot") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestOpenRaw104SmallerThanPayload pins the r132 quirk at unit level: the
+// "+104" field is not a byte length, so a value smaller than the payload is
+// normal and must not be rejected. The item's real slot comes from the
+// neighbouring pos values.
+func TestOpenRaw104SmallerThanPayload(t *testing.T) {
+	rkaf := buildRKAF(t, []fixturePart{item("parameter", bytes.Repeat([]byte{1}, 590))})
+	binary.LittleEndian.PutUint32(rkaf[140+104:140+108], 1) // r132 stores 1 here
+	path := writeTemp(t, appendMD5(buildRKFWBody(nil, rkaf)))
+	img, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	it := img.Items[0]
+	if it.PaddedBlocks != 1 {
+		t.Errorf("PaddedBlocks = %d, want the raw field 1", it.PaddedBlocks)
+	}
+	// The builder pads the 590-byte payload to one 1024-byte slot; what matters
+	// is that the slot comes from the layout, not from the raw "+104" value.
+	if it.PaddedSize != 1024 {
+		t.Errorf("PaddedSize = %d, want the 1024-byte archive slot", it.PaddedSize)
 	}
 }
 
@@ -414,15 +439,6 @@ func TestOpenTooManyItems(t *testing.T) {
 	path := writeTemp(t, appendMD5(buildRKFWBody(nil, rkaf)))
 	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "room for 16") {
 		t.Fatalf("error = %v, want item-count error", err)
-	}
-}
-
-func TestOpenPaddedSmallerThanSize(t *testing.T) {
-	rkaf := buildRKAF(t, []fixturePart{item("boot", bytes.Repeat([]byte{1}, 600))})
-	binary.LittleEndian.PutUint32(rkaf[140+104:140+108], 512) // < 600
-	path := writeTemp(t, appendMD5(buildRKFWBody(nil, rkaf)))
-	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "smaller than its payload") {
-		t.Fatalf("error = %v, want padded-size error", err)
 	}
 }
 
@@ -481,6 +497,64 @@ func TestRecoverTrueLength(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := recoverTrueLength(c.stored, c.available); got != c.want {
 				t.Fatalf("recoverTrueLength(0x%x, 0x%x) = 0x%x, want 0x%x", c.stored, c.available, got, c.want)
+			}
+		})
+	}
+}
+
+// TestResolveArchiveLength pins the policy on real numbers: openFyde r132 has
+// 4,053,098,496 archive bytes followed by 2^32 bytes of padding, and its RKAF
+// length field (4053098496) agrees with the RKFW image_length (4053098500). The
+// parser must take the stored value instead of recovering a phantom wrap, while
+// a bare RKAF whose length really wrapped must still be recovered.
+func TestResolveArchiveLength(t *testing.T) {
+	const gib = uint64(1) << 32
+	cases := []struct {
+		name        string
+		stored      uint64
+		container   uint64
+		hasStore    bool
+		available   uint64
+		want        uint64
+		wantWrapped bool
+	}{
+		{
+			name:      "r132: fields agree, file has 2^32 bytes of padding",
+			stored:    4053098496,
+			container: 4053098496,
+			hasStore:  true,
+			available: 8348065824,
+			want:      4053098496,
+		},
+		{
+			name:        "bare RKAF that really wrapped",
+			stored:      0x1000,
+			available:   0x1000 + gib,
+			want:        0x1000 + gib,
+			wantWrapped: true,
+		},
+		{
+			name:      "no wrap and nothing extra",
+			stored:    0x1000,
+			available: 0x1000,
+			want:      0x1000,
+		},
+		{
+			name:        "container disagrees, wrap recovered from the layout",
+			stored:      0x2000,
+			container:   0x3000,
+			hasStore:    true,
+			available:   0x2000 + gib,
+			want:        0x2000 + gib,
+			wantWrapped: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, wrapped := resolveArchiveLength(c.stored, c.container, c.hasStore, c.available)
+			if got != c.want || wrapped != c.wantWrapped {
+				t.Fatalf("resolveArchiveLength(0x%x, 0x%x, %v, 0x%x) = 0x%x, %v; want 0x%x, %v",
+					c.stored, c.container, c.hasStore, c.available, got, wrapped, c.want, c.wantWrapped)
 			}
 		})
 	}
