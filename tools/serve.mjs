@@ -3,8 +3,8 @@
 //
 // WebUSB needs a secure context; http://localhost counts as one, file:// does
 // not (ES modules and module workers are blocked there). No dependencies, no
-// watcher: just serve ./web/probe with no-cache headers so edits show up on
-// reload.
+// watcher: just serve ./web with no-cache headers so edits (and the service
+// worker) show up on reload.
 
 import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
@@ -21,6 +21,7 @@ const MIME = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.wasm': 'application/wasm',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',

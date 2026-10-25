@@ -3,11 +3,12 @@
 浏览器里复刻 Rockchip `upgrade_tool` 的刷机路径：协议与编排用 Go 编译成 WebAssembly，USB 走 WebUSB，完全本地运行。
 
 **当前阶段：M1（Go/WASM 核心 + WebUSB bridge + `ld`/`cd`/`sd` + Download Boot + 只读信息）、
-M2（离线 `uf --dry-run` 计划）、M3a（写入层 + `uf` 状态机，mock/回放验证），以及 M3b（WebUSB 写入绑定 +
-真机前自检）。**
+M2（离线 `uf --dry-run` 计划）、M3a（写入层 + `uf` 状态机，mock/回放验证）、M3b（WebUSB 写入绑定 +
+真机前自检），以及 M4（可安装 PWA + 离线 + 官方 `.zip` 直读）。**
 M3b 之后浏览器里已经有一条完整的写入路径：从 `update.img` 的 RKFW 头里切出**镜像自带的 loader** 做
 Download Boot，再用 `internal/uf` 的同一套状态机执行 `gpt → wl → rd`；写入前必须通过页面的逐项自检。
-真机端到端由 stage 6 负责，本阶段的目标是让第一次真机尝试尽量一次成功。
+M4 把这一页变成可以装到桌面、断网也能打开的应用，并且允许直接选择官方 `.zip`（ZIP64 + 流式 deflate，
+不落地 3.8 GiB）。真机端到端由后续 stage 负责，本阶段的目标是让第一次真机尝试尽量一次成功。
 
 > 为什么 maskrom 下读不到信息：裸 maskrom 不接受 rockusb 的 bulk CBW，5 条只读命令的 31 字节 CBW 全部被
 > STALL（M0b 真机实测，见 `internal/rockusb/testdata/maskrom-cbw-stall.json`）。所以**上电后的第一条命令必须
@@ -89,11 +90,13 @@ main thread (app.js)                        worker (worker.js)
 
 ```bash
 pixi install    # 首次：go + nodejs 全部由 pixi 管理
-pixi run dev    # http://localhost:5173/app/  （M1 页面；M0 探针在 /probe/）
-pixi run test   # go test ./... + node --test（协议单测、回放、mock、wasm 集成、worker RPC）
+pixi run dev    # http://localhost:5173/app/  （可安装页面；M0 探针在 /probe/）
+pixi run test   # go test ./... + node --test（协议单测、回放、mock、wasm 集成、worker RPC、zip/PWA）
 pixi run build  # 生成物检查 + go build/vet + wasm 构建 + 所有 JS 语法检查
 pixi run wasm   # 只构建 web/app/wasm/rk3588.wasm 并拷贝匹配的 wasm_exec.js
 pixi run gen    # 改了 internal/rockusb 或 internal/device 的命令表后重新生成 protocol.js
+pixi run sample # 生成 web/samples/ 下的演示镜像与 zip（离线 / zip 直读用）
+pixi run icons  # 重新生成 PWA 图标
 ```
 
 `pixi run dev` 起的是零依赖静态服务（`tools/serve.mjs`），只监听 `127.0.0.1`，不发任何网络请求。
@@ -330,6 +333,36 @@ pixi run uf --dry-run --loader rk3588_spl_loader_v1.06.111.bin update.img
 pixi run uf --mock update.img
 ```
 
+## M4：PWA、离线安装与官方 zip 直读
+
+M4 只改页面与工具链，`internal/` 的写入语义与 `web/app/preflight.js` 的门禁条件未动（写入路径正在
+另一条线做真机验证）。
+
+- **可安装 PWA**：`web/app/manifest.webmanifest` + `web/app/sw.js`。service worker 在 `install` 时预缓存
+  页面、全部 JS 模块、图标与 `wasm/rk3588.wasm`（19 项），策略是 **cache-first**；`activate` 清掉旧版本
+  cache，页面发现等待中的 worker 时提示“刷新页面”。装成应用后**断网仍可打开**，写入能力与是否安装无关。
+- **官方 `.zip` 直读**：`web/app/zip.js`（ZIP32/ZIP64 中央目录，只读文件尾几十 KiB）+ `web/app/zip-source.js`
+  （把首字节为 `RKFW` 的条目包成与 `File` 相同的 `{name,size,read(offset,length)}`，用
+  `DecompressionStream('deflate-raw')` 按需解压，保留 8 MiB 回退窗口）。解出来的字节与同一份 `.img`
+  完全一致，所以**计划逐字段相同**；`web/app/test/uf-zip.test.mjs` 用真正的 Go/WASM 核心比较两份完整计划。
+- **安装引导 / Chromium-only 提示 / 设备重连向导 / 错误恢复 / 日志导出**：重连向导把 `db` 前后的
+  “重新枚举 → 授权 → `ld`”写成三步；日志导出为 NDJSON（shell 输出、uf 进度、每次 USB 传输、自检判定、
+  zip 统计），与 CLI 的 `uf --log` 同形状。
+- **CI 与部署**：`.github/workflows/ci.yml` 跑 `pixi run build` + `pixi run test`（并校验图标可重现）；
+  `.github/workflows/pages.yml` 构建 `web/` 并用 GitHub Pages 发布（相对路径 + `.nojekyll`，适配 `/<repo>/`）。
+- **驱动文档**：macOS arm64 / Linux / Windows 的 WebUSB 说明见
+  [`docs/webusb-drivers.md`](docs/webusb-drivers.md)；Linux 的 udev 规则可直接装
+  [`docs/99-rockchip-webusb.rules`](docs/99-rockchip-webusb.rules)。安装、离线验证与 zip 直读细节见
+  [`docs/pwa-offline.md`](docs/pwa-offline.md)。
+
+```bash
+pixi run sample   # 生成 web/samples/demo-update.img + 包住它的 ZIP64 zip（演示用，不下载厂商 blob）
+pixi run icons    # 重新生成 web/app/icons/*.png（已提交；CI 会校验与生成器一致）
+```
+
+离线验证（不碰设备）：`pixi run dev` → 打开 `http://localhost:5173/app/` → 等 `#sw-note` 显示“离线缓存已
+接管本页” → DevTools 勾 Offline → 刷新，页面与 `core` 徽标仍然正常，演示模式还能生成计划。
+
 
 
 ## 仍然成立的早期限制
@@ -348,10 +381,25 @@ cmd/uf/                     uf --dry-run 计划 + --mock/--replay 写入状态�
 cmd/wasm/                   Go/WASM 核心导出（shell + ufPlan/ufRun/ufCancel/imageLoader/demoImage）
 cmd/genprotocol/            生成 web/app/protocol.js 与 web/probe/protocol.js
 web/app/                    页面：主线程 WebUSB host、worker、mock 设备、preflight.js、写入面板
+web/app/zip.js              ZIP32/ZIP64 中央目录解析（只读文件尾，不解压）
+web/app/zip-source.js       按需解压的 image source（DecompressionStream，8 MiB 回退窗口）
+web/app/sw.js               service worker：预缓存页面 + wasm，断网可开
+web/app/manifest.webmanifest  PWA manifest（standalone、相对 scope）
+web/app/icons/              PWA 图标（由 tools/make-icons.mjs 生成，已提交）
 web/probe/                  M0 只读探针（保留用于抓 trace 与对照）
 tools/serve.mjs             本地静态服务
+tools/build-wasm.mjs        构建 wasm 并拷贝匹配的 wasm_exec.js
+tools/zip-writer.mjs        测试/示例用的最小 zip 写入器（支持 ZIP64）
+tools/make-sample.mjs       生成 web/samples/ 的演示镜像与 zip
+tools/make-icons.mjs        生成 PWA PNG 图标（无图像依赖）
+tools/demo-image/           把 imageplan.DemoImage 写成文件（供 sample 任务使用）
+.github/workflows/ci.yml    pixi run build + test
+.github/workflows/pages.yml 构建 web/ 并部署到 GitHub Pages
 docs/protocol-notes.md      协议笔记（含 §11 “为什么必须用镜像自带的 loader”）
 docs/uf-write-path.md       写入命令、状态机、IDB/擦除假设、mock trace 与日志格式
+docs/webusb-drivers.md      macOS arm64 / Linux / Windows 的 WebUSB 与驱动说明
+docs/99-rockchip-webusb.rules  Linux udev 规则
+docs/pwa-offline.md         安装、离线验证、zip 直读与日志导出
 ```
 
 ## 协议来源与许可
