@@ -13,12 +13,17 @@ gen = "go run ./cmd/genprotocol"
 # wasm_exec.js next to it.
 wasm = "node tools/build-wasm.mjs"
 # Serve the static pages on http://localhost:5173 (WebUSB secure context):
-# /app/ is the M1 tool, /probe/ is the M0 read-only probe.
+# /app/ is the flasher (installable PWA), /probe/ is the M0 read-only probe.
 dev = { cmd = "node tools/serve.mjs web 5173", depends-on = ["gen", "wasm"] }
+# Regenerate the PWA icons (they are committed; this keeps them reproducible).
+icons = "node tools/make-icons.mjs"
+# Write the synthetic demo image and a ZIP64 package around it into
+# web/samples/ (gitignored): the fixture the zip path is demonstrated with.
+sample = "node tools/make-sample.mjs"
 # Everything CI needs: generated JS is current, Go compiles+vet (host + wasm),
 # JS parses.
-build = { cmd = "go run ./cmd/genprotocol -check && go build ./... && go vet ./... && node --check web/app/protocol.js && node --check web/app/bridge.js && node --check web/app/mock-host.js && node --check web/app/mock-loader.js && node --check web/app/usb-host.js && node --check web/app/worker.js && node --check web/app/preflight.js && node --check web/app/app.js && node --check web/probe/protocol.js && node --check web/probe/rockusb.js && node --check web/probe/probe.js && node --check tools/serve.mjs && node --check tools/build-wasm.mjs", depends-on = ["gen", "wasm"] }
-test = { cmd = "go test ./... && node --test web/probe/rockusb.test.mjs web/probe/probe.test.mjs web/app/test/bridge.test.mjs web/app/test/mock-host.test.mjs web/app/test/usb-host.test.mjs web/app/test/core.test.mjs web/app/test/worker.test.mjs web/app/test/preflight.test.mjs web/app/test/uf.test.mjs", depends-on = ["wasm"] }
+build = { cmd = "go run ./cmd/genprotocol -check && go build ./... && go vet ./... && node --check web/app/protocol.js && node --check web/app/bridge.js && node --check web/app/mock-host.js && node --check web/app/mock-loader.js && node --check web/app/usb-host.js && node --check web/app/worker.js && node --check web/app/preflight.js && node --check web/app/app.js && node --check web/app/zip.js && node --check web/app/zip-source.js && node --check web/app/sw.js && node --check web/probe/protocol.js && node --check web/probe/rockusb.js && node --check web/probe/probe.js && node --check tools/serve.mjs && node --check tools/build-wasm.mjs && node --check tools/zip-writer.mjs && node --check tools/make-sample.mjs && node --check tools/make-icons.mjs", depends-on = ["gen", "wasm"] }
+test = { cmd = "go test ./... && node --test web/probe/rockusb.test.mjs web/probe/probe.test.mjs web/app/test/bridge.test.mjs web/app/test/mock-host.test.mjs web/app/test/usb-host.test.mjs web/app/test/core.test.mjs web/app/test/worker.test.mjs web/app/test/preflight.test.mjs web/app/test/uf.test.mjs web/app/test/zip.test.mjs web/app/test/zip-source.test.mjs web/app/test/pwa.test.mjs", depends-on = ["wasm"] }
 fmt = "go fmt ./..."
 # M2: offline image plan, e.g. `pixi run uf --dry-run update.img`. Never opens
 # a USB device and never writes flash.

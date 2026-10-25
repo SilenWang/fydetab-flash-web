@@ -154,6 +154,14 @@ type Options struct {
 	SkipReadback bool
 	// IDB overrides the IDB byte model. nil means NewRK28RC4Model().
 	IDB IDBModel
+	// RewriteIDB forces a rebuild of the IDB at LBA 64 even when the device
+	// already holds a valid one. The default (false) never overwrites an
+	// existing IDB: the device's own block is what its BootROM expects, and
+	// SIL-515 showed the two models are not interchangeable.
+	RewriteIDB bool
+	// IDBBackupPath, when set, receives the bytes read from LBA 64 before any
+	// overwrite. The same bytes are always in the run log as hex.
+	IDBBackupPath string
 	// Trace receives every USB transfer, successful or not.
 	Trace func(rockusb.Transfer)
 	// Progress receives phase/chunk progress snapshots.

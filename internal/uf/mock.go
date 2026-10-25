@@ -430,6 +430,9 @@ type SimConfig struct {
 	// Capability is the 8-byte READ_CAPABILITY reply; default Direct LBA +
 	// First 4M Access.
 	Capability [8]byte
+	// IDB seeds the flash at LBA 64, so a test can present an existing New
+	// IDB ("RKNS") or legacy one ("RK28") the runner must not overwrite.
+	IDB []byte
 	// Faults are transport failures to inject.
 	Faults []SimFault
 }
@@ -500,6 +503,12 @@ func newSimulator(cfg SimConfig, mode rockusb.MediaMode, fl *simFlash) *Simulato
 	}
 	if fl == nil {
 		fl = &simFlash{data: make([]byte, int(cfg.FlashSectors)*SectorSize)}
+	}
+	if len(cfg.IDB) > 0 {
+		off := int(IDBDefaultLBA) * SectorSize
+		if off+len(cfg.IDB) <= len(fl.data) {
+			copy(fl.data[off:], cfg.IDB)
+		}
 	}
 	sim := &Simulator{cfg: cfg, mode: mode, fl: fl, link: simLink(mode), faults: append([]SimFault(nil), cfg.Faults...)}
 	return sim

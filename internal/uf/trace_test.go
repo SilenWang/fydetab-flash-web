@@ -62,6 +62,9 @@ func loaderSessionFrames(t *testing.T, plan *Plan, failLBA *uint32) []Frame {
 	}
 
 	if plan.IDB.Bytes > 0 {
+		// The runner reads LBA 64 first and identifies what is there. The
+		// recorded device has an empty block, so the run proceeds to write one.
+		addRead(rockusb.Op(OpReadLBA), IDBProbeSectors*SectorSize, make([]byte, IDBProbeSectors*SectorSize))
 		addWrite(plan.IDB.LBASector, int(plan.IDB.Bytes))
 	}
 	for _, it := range plan.Items {

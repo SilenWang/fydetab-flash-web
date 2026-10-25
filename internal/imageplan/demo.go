@@ -117,10 +117,15 @@ func DemoImage() []byte {
 	for i := range uboot {
 		uboot[i] = byte(i * 5)
 	}
+	// The demo must pass the same payload-signature check a real image does:
+	// uboot is a FIT image (device tree) and the kernel partition starts with
+	// the ChromeOS magic.
+	copy(uboot[0:4], []byte{0xD0, 0x0D, 0xFE, 0xED})
 	boot := make([]byte, 16*1024)
 	for i := range boot {
 		boot[i] = byte(i * 11)
 	}
+	copy(boot[0:8], "CHROMEOS")
 	state := make([]byte, 512*1024)
 	for i := range state {
 		state[i] = byte(i * 13)

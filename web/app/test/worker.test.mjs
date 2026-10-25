@@ -181,3 +181,28 @@ test('the shared worker path boots, switches to mock mode and runs the session',
     assert.equal(reply.id, id);
   });
 });
+
+// A plan reply used to be posted as 'uf-result', the message the page renders
+// through the write panel — so every successful plan showed up as a fake
+// "write failed". Plans now have their own message type.
+test('a uf-plan reply is not posted as a write result', async () => {
+  await loaded;
+  // The previous test booted the worker; prove it is still answering rather
+  // than waiting for a 'ready' that has already been consumed.
+  messages.length = 0;
+  globalThis.self.onmessage({ data: { type: 'mode', mode: 'mock' } });
+  await waitFor((m) => m.type === 'mode', 5000, 'mode ack');
+
+  const id = 424242;
+  messages.length = 0;
+  await globalThis.self.onmessage({ data: { type: 'uf-plan', id, demo: true, opts: {} } });
+  const reply = await waitFor(
+    (m) => (m.type === 'uf-plan-result' || m.type === 'uf-result') && m.id === id,
+    30000,
+    'plan reply',
+  );
+  assert.equal(reply.type, 'uf-plan-result', 'the plan must use its own message type');
+  assert.equal(reply.result.ok, true, JSON.stringify(reply.result.error));
+  assert.equal(reply.result.kind, undefined);
+  assert.ok(reply.result.report, 'the reply still carries the plan report');
+});

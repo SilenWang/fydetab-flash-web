@@ -1,0 +1,37 @@
+{
+  "name": "RK3588 WebFlasher",
+  "short_name": "RK Flasher",
+  "description": "rockusb over WebUSB：RK3588 镜像计划、Download Boot 与 uf 写入。可离线安装，支持官方 .zip 直读。",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "browser"],
+  "orientation": "any",
+  "background_color": "#0e1116",
+  "theme_color": "#0e1116",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "categories": ["utilities", "developer"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

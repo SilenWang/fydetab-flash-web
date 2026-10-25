@@ -84,11 +84,20 @@ connect ─┬─ MASKROM ──> Download Boot(ul) ──> 等待重新枚举�
   这是有意的：中途失败的 item 在 flash 上可能是半截内容，按 item 粒度重写比尝试续到扇区更安全。
 - `rd` 之后设备会重新枚举，浏览器授权同样可能失效；这是成功路径的已知行为，不是失败。
 
-## 5. IDB 字节模型
+## 5. IDB 字节模型（先读后判，默认不覆盖）
 
-`gpt` 阶段 = Prepare IDB + Download IDB；默认模型 `rkboot-new-idb`。
+`gpt` 阶段 = **读取设备 LBA 64 → 识别类型 → 必要时重建**。Fydetab Duo 的 LBA 64 是
+`RKNS` 头（New IDB）；旧工具用未验证的 `rk28-rc4` 覆盖它，BootROM 因此读不出 uboot。
+现在的顺序是：
 
-New IDB 由 RKBOOT loader 的三段组成：
+1. `READ_LBA` 读 LBA 64 的前 8 个扇区，识别 `RKNS` / `RK28` / 空 / 未知（`uf.IdentifyIDB`）；
+2. **设备已有有效 IDB（RKNS 或 RK28）→ 默认不写**，只改 GPT 与数据分区；
+3. 只有 `--rewrite-idb` 才重建，且按**识别出的类型**选模型（`uf.ModelForType`）：
+   `RK28` 用 `rk28-rc4`，`RKNS` 用 `rkboot-new-idb`；
+4. 覆盖前把原 IDB 字节写进日志（前 32 字节 hex，`--idb-backup <file>` 可落盘整段）；
+5. 空块按所选模型写入；未知字节且未显式 `--rewrite-idb` 时报错停止，不静默破坏。
+
+`rkboot-new-idb`（New IDB）由 RKBOOT loader 的三段组成：
 
 1. 从 RKFW loader（archive 里的 `bootloader`/`MiniLoaderAll.bin`）的
    **ENTRYLOADER** 表（type 4）取 `FlashHead`、`FlashData`、`FlashBoot`；
@@ -101,8 +110,10 @@ v23 loader 的三段是 2048 + 73728 + 178176 = **253,952 B**，生成的 IDB �
 开头；旧模型 `rk28-rc4`（整份 loader 按 512 字节 RC4，422,400 B）是错误布局，只保留
 用于复现旧日志。`raw-loader` 仍可用于 A/B。
 
-`Verified()` 仍为 false：字节布局已经在真实镜像上核对过，但还没有一次“用新模型刷完
-并启动”的真机确认；真机日志仍会记录 `idb.model`。
+`Verified()` 仍为 false：New IDB 的字节布局已在真实镜像和设备现有 `RKNS` 头上核对过，
+但还没有一次“用新模型刷完并启动”的真机确认。日志固定记录 `idb.existing`
+（`RKNS`/`RK28`/`empty`/`unknown`）、`idb.overwritten`、`idb.existingHeadHex`、
+`idb.backupPath` 与 `idb.model`/`idb.verified`。
 
 ## 6. 写入前的擦除语义（未确认，因此显式）
 

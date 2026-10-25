@@ -230,6 +230,25 @@ type Image struct {
 	// by whole 4 GiB steps to match the bytes actually present.
 	LengthWrapped bool
 
+	// DataHole is the number of bytes packed into the archive that the 32-bit
+	// item table cannot describe: the packer reserves the STATE partition's
+	// full slot (5 GiB) while the table only counts the 1 GiB payload, so
+	// everything after STATE sits DataHole bytes further along than its pos.
+	// Zero when the archive is contiguous. See hole.go.
+	DataHole int64
+	// DataHoleStart is the logical archive offset where DataHole begins: the
+	// pos of the first item stored after the hole. When it equals the archive
+	// body end the extra bytes sit after the last payload.
+	DataHoleStart int64
+	// DataHoleDecided reports whether a payload signature settled DataHoleStart.
+	// False means the hole is real but its position is unverified, so the plan
+	// must refuse to write rather than read every item from a guessed offset.
+	DataHoleDecided bool
+	// HighWords reports that the item table itself carried 64-bit offsets/sizes
+	// (file[50..59]). Those are authoritative: DataHole is then zero and
+	// ItemOffset uses Pos64.
+	HighWords bool
+
 	Archive Archive
 	Items   []Item
 
@@ -400,18 +419,39 @@ func OpenReaderAt(r io.ReaderAt, size int64, name string) (*Image, error) {
 	if err := validateItems(items, bodyLen, img); err != nil {
 		return nil, err
 	}
+
+	// The 32-bit table cannot express positions past 4 GiB, and the packer
+	// inserts the STATE slot's reserved bytes into the file. Recover where the
+	// payloads really are before anything reads them.
+	img.RKAFOffset = rkafOffset
+	img.RKAFLength = int64(bodyLen) + 4
+	img.RKAFLengthField = arch.Length
+	img.HighWords = hasHigh
+	declaredEnd := rkafOffset + int64(bodyLen) + 4
+	var decided bool
+	img.DataHole, img.DataHoleStart, decided = detectDataHole(img, rkafOffset, declaredEnd, items)
+	img.DataHoleDecided = decided || img.DataHole == 0
+	if img.DataHole > 0 && decided && img.DataHoleStart < declaredEnd-4 {
+		shifted := 0
+		for _, it := range items {
+			if img.shifted(it) && it.HasData() {
+				shifted++
+			}
+		}
+		img.warnf("the RKAF archive carries a %s (%d-byte) hole at logical 0x%x: %d item(s) are stored %s further along than their pos field says (data offsets include the hole)",
+			humanGiB(img.DataHole), img.DataHole, img.DataHoleStart, shifted, humanGiB(img.DataHole))
+	}
+
 	// Bytes after the archive are not archive content. Signature blobs are
-	// small; a large tail is padding that belongs to neither the RKAF nor a
-	// signature, and it changes where the MD5 lives (compare VerifyMD5).
-	if trailing := size - (rkafOffset + int64(bodyLen) + 4); trailing > 1<<20 {
+	// small; a large tail with no hole explanation is padding that belongs to
+	// neither the RKAF nor a signature, and it changes where the MD5 lives
+	// (compare VerifyMD5).
+	if trailing := size - (rkafOffset + int64(bodyLen) + 4); trailing > 1<<20 && img.DataHole == 0 {
 		img.warnf("the file has %d bytes after the RKAF archive (padding, not archive content); the RKAF CRC covers only the first 0x%x bytes of the archive",
 			trailing, bodyLen)
 	}
 
 	img.Archive = arch
-	img.RKAFOffset = rkafOffset
-	img.RKAFLength = int64(bodyLen) + 4
-	img.RKAFLengthField = arch.Length
 	img.Items = items
 	for i := range img.Items {
 		if strings.EqualFold(img.Items[i].Name, "parameter") {
@@ -638,9 +678,14 @@ func recoverTrueLength(stored, available uint64) uint64 {
 	return stored + ((available - stored) >> 32 << 32)
 }
 
-// ItemOffset is the absolute file offset of an item's payload.
+// ItemOffset is the absolute file offset of an item's payload. It accounts for
+// the archive hole: an item after the hole is stored DataHole bytes further
+// along than its 32-bit pos says.
 func (img *Image) ItemOffset(it Item) int64 {
-	return img.RKAFOffset + int64(it.Pos64)
+	if img.HighWords {
+		return img.RKAFOffset + int64(it.Pos64)
+	}
+	return img.DataOffset(it)
 }
 
 // ReaderAt returns the byte source this image was parsed from. It is what uf's

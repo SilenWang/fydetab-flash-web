@@ -33,26 +33,35 @@ export function currentDevice(devices, current) {
   return devices.length === 1 ? devices[0] : null;
 }
 
-/** deviceMode normalises the mode a listed device reports.
+/**
+ * deviceMode normalises the mode a device reports.
  *
- * The Go core puts both a numeric enum (mode: 1=maskrom, 2=loader) and the
- * `ld` label (modeLabel: "Maskrom" / "Loader") on each device. Older callers
- * (and the unit tests) pass a plain `mode` string, so accept either shape:
- * reading only `mode` made every real board look like "not maskrom, not
- * LOADER" and kept the write button disabled.
+ * The real `ld` output carries a numeric media mode plus a label:
+ *   { mode: 2, modeLabel: 'Loader', ... }
+ * while the mock/tests use the string form. Ignoring the numeric form made
+ * every pre-flight check fail on hardware (SIL-515): the write button stayed
+ * grey because isLoader() never saw 'LOADER'.
  */
+const MODE_NAMES = { 0: 'MASKROM', 1: 'MASKROM', 2: 'LOADER', 3: 'LOADER' };
+
 export function deviceMode(device) {
   if (!device) return 'UNKNOWN';
-  if (typeof device.mode === 'string' && device.mode) return device.mode.toUpperCase();
-  if (typeof device.modeLabel === 'string' && device.modeLabel) return device.modeLabel.toUpperCase();
-  switch (Number(device.mode)) {
-    case 1:
-      return 'MASKROM';
-    case 2:
-      return 'LOADER';
-    default:
-      return 'UNKNOWN';
+  const mode = device.mode;
+  if (typeof mode === 'number') {
+    if (MODE_NAMES[mode]) return MODE_NAMES[mode];
+    const label = String(device.modeLabel ?? '').toUpperCase();
+    if (label.includes('LOADER')) return 'LOADER';
+    if (label.includes('MASKROM')) return 'MASKROM';
+    return 'UNKNOWN';
   }
+  if (typeof mode === 'string' && mode) {
+    const upper = mode.toUpperCase();
+    if (upper === 'LOADER' || upper === 'MASKROM' || upper === 'UNKNOWN') return upper;
+  }
+  const label = String(device.modeLabel ?? '').toUpperCase();
+  if (label.includes('LOADER')) return 'LOADER';
+  if (label.includes('MASKROM')) return 'MASKROM';
+  return 'UNKNOWN';
 }
 
 /** isMaskrom reports whether a listed device is a bare maskrom board. */
@@ -207,7 +216,7 @@ export function evaluatePreflight(input = {}) {
       status: 'fail',
       detail: `计划 ${facts.items} 项、共 ${formatBytes(facts.totalBytes)}；${facts.uncoveredTails} 个分区尾部未覆盖（${formatBytes(
         facts.uncoveredBytes,
-      )}，含 ${facts.uncoveredParts || facts.uncoveredPartitions || '?'}）——请在下面显式选择处置并打勾。`,
+      )}，含 ${facts.uncoveredParts || '?'}）——请在下面显式选择处置并打勾。`,
     });
   } else {
     items.push({
@@ -216,7 +225,7 @@ export function evaluatePreflight(input = {}) {
       status: 'pass',
       detail: `计划 ${facts.items} 项、共 ${formatBytes(facts.totalBytes)}；未覆盖 ${formatBytes(
         facts.uncoveredBytes,
-      )}（${facts.uncoveredParts || facts.uncoveredPartitions || '无'}）→ ${facts.eraseMode}${
+      )}（${facts.uncoveredParts || '无'}）→ ${facts.eraseMode}${
         facts.uncoveredTails > 0 ? '（已确认）' : '（没有未覆盖区间）'
       }。`,
     });

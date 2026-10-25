@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
@@ -112,6 +113,20 @@ type IDBReport struct {
 	PlannedBytes int64  `json:"plannedBytes"`
 	Model        string `json:"model"`
 	Verified     bool   `json:"verified"`
+	// Existing is what the device held at LBA 64 before this run: RKNS (New
+	// IDB), RK28 (legacy) or empty.
+	Existing string `json:"existing"`
+	// ExistingMagic is the first four bytes as text/hex, and ExistingHeadHex
+	// the first 32 bytes, so the old block can be compared after the fact.
+	ExistingMagic    string `json:"existingMagic,omitempty"`
+	ExistingHeadHex  string `json:"existingHeadHex,omitempty"`
+	ExistingVerified bool   `json:"existingVerified"`
+	// Overwritten is false when the run deliberately left the device's IDB
+	// alone (the default for an existing, valid block).
+	Overwritten bool `json:"overwritten"`
+	// BackupPath/BackupHex record where the pre-write bytes went.
+	BackupPath string `json:"backupPath,omitempty"`
+	BackupHex  string `json:"backupHex,omitempty"`
 }
 
 // EraseReport records the explicit tail decision and what actually happened.
@@ -736,7 +751,80 @@ func (r *runner) downloadIDB(ctx context.Context) error {
 	}
 
 	r.beginPhase(PhaseIDB, "Prepare/Download IDB")
+	lba := r.plan.IDB.LBASector
+	if lba == 0 {
+		lba = IDBDefaultLBA
+	}
+
+	// Read LBA 64 first. The device's own IDB is what its BootROM expects; the
+	// two formats are not interchangeable (SIL-515 wrote an rk28-rc4 block over
+	// an RKNS one and the board never booted).
+	existing := make([]byte, 0, IDBProbeSectors*SectorSize)
+	probe, probeErr := r.dev.write.ReadLBAs(ctx, lba, IDBProbeSectors)
+	info := IDBInfo{Type: IDBTypeUnknown}
+	if probeErr != nil {
+		warning := fmt.Sprintf("读取设备 IDB（LBA %d）失败: %v；按“未知”处理", lba, probeErr)
+		r.rep.Warnings = append(r.rep.Warnings, warning)
+		r.event(PhaseIDB, "warn", "", warning)
+	} else {
+		existing = probe
+		info = IdentifyIDB(probe)
+	}
+	rep := &IDBReport{LBA: lba, PlannedBytes: r.plan.IDB.Bytes,
+		Existing: string(info.Type), ExistingMagic: info.Magic,
+		ExistingHeadHex: info.HeadHex, ExistingVerified: info.Verified}
+	r.rep.IDB = rep
+	r.event(PhaseIDB, "info", "", fmt.Sprintf(
+		"设备现有 IDB：%s（magic %s）%s", info.Type, info.Magic, idbTypeNote(info)))
+
+	// Decide whether to write at all.
 	model := r.opts.IDB
+	overwrite := r.opts.RewriteIDB
+	switch {
+	case info.Verified && !r.opts.RewriteIDB:
+		// Default: keep what the device already has.
+		r.rep.Phases = append(r.rep.Phases, PhaseReport{Phase: PhaseIDB, Name: "Prepare/Download IDB", Status: "skipped",
+			Note: fmt.Sprintf("设备已有有效 IDB（%s），未覆盖；需要重建时加 --rewrite-idb", info.Type)})
+		r.notes = append(r.notes, fmt.Sprintf(
+			"设备 LBA %d 已有有效 IDB（%s）：按默认策略不重写，只改 GPT 与数据分区。", lba, info.Type))
+		r.dropIDBBytes()
+		return nil
+	case info.Type == IDBTypeUnknown && !r.opts.RewriteIDB:
+		hint := "先确认 LBA 64 上的内容；确需重建时加 --rewrite-idb（会先备份原字节）。"
+		return r.fail(PhaseIDB, "", rockusb.ErrDeviceNotSupport,
+			fmt.Sprintf("LBA %d 有非 IDB 字节（magic %s），既不是 RKNS 也不是 RK28", lba, info.Magic), hint, nil)
+	case info.Verified && r.opts.RewriteIDB:
+		// Rebuild in the format the device uses, not in the model's default.
+		m, err := ModelForType(info.Type)
+		if err != nil {
+			return r.fail(PhaseIDB, "", rockusb.ErrDeviceNotSupport,
+				fmt.Sprintf("设备 IDB 是 %s，无法用本工具重建", info.Type),
+				"这台设备是 New IDB（RKNS）；本版本没有经过验证的 RKNS 写入实现，不要用 rk28-rc4 覆盖它。保留设备现有 IDB 即可。", err)
+		}
+		model = m
+	}
+	if !overwrite && info.Type != IDBTypeEmpty {
+		overwrite = true // only reached for unknown+rewrite; keeps the flag honest
+	}
+
+	// Back up the bytes about to be overwritten, into the log and optionally a
+	// file.
+	if len(existing) > 0 {
+		rep.BackupHex = info.HeadHex
+		if path := r.opts.IDBBackupPath; path != "" {
+			if err := os.WriteFile(path, existing, 0o644); err != nil {
+				warning := fmt.Sprintf("IDB 备份写入 %s 失败: %v（日志里仍有前 32 字节 hex）", path, err)
+				r.rep.Warnings = append(r.rep.Warnings, warning)
+				r.event(PhaseIDB, "warn", "", warning)
+			} else {
+				rep.BackupPath = path
+			}
+		}
+		r.event(PhaseIDB, "info", "", fmt.Sprintf(
+			"覆盖前备份 IDB：%d B 原样保存在 %s；前 32 字节 %s",
+			len(existing), orBackupFile(rep.BackupPath), info.HeadHex))
+	}
+
 	in := LoaderInput{Container: r.loader}
 	if parsed, err := rockusb.ParseLoaderImage(r.loader); err == nil {
 		in.Parsed = parsed
@@ -744,10 +832,6 @@ func (r *runner) downloadIDB(ctx context.Context) error {
 	idb, err := model.Build(in)
 	if err != nil {
 		return r.fail(PhaseIDB, "", rockusb.ErrFailed, fmt.Sprintf("准备 IDB 失败: %v", err), "", err)
-	}
-	lba := r.plan.IDB.LBASector
-	if lba == 0 {
-		lba = IDBDefaultLBA
 	}
 	r.event(PhaseIDB, "info", "", fmt.Sprintf("Prepare IDB: model=%s verified=%t, %d B -> LBA %d（字节模型待真机核对）",
 		model.Name(), model.Verified(), len(idb), lba))
@@ -757,8 +841,10 @@ func (r *runner) downloadIDB(ctx context.Context) error {
 		r.event(PhaseIDB, "warn", "", warning)
 	}
 
-	r.rep.IDB = &IDBReport{LBA: lba, Bytes: int64(len(idb)), PlannedBytes: r.plan.IDB.Bytes,
-		Model: model.Name(), Verified: model.Verified()}
+	rep.Bytes = int64(len(idb))
+	rep.Model = model.Name()
+	rep.Verified = model.Verified()
+	rep.Overwritten = overwrite
 
 	if !r.opts.SkipSignatureCheck {
 		if err := checkIDBMagic(idb); err != nil {
@@ -773,8 +859,44 @@ func (r *runner) downloadIDB(ctx context.Context) error {
 	if err := r.verifyReadback(lba, idb, 0, "IDB"); err != nil {
 		return err
 	}
-	r.endPhase("ok", fmt.Sprintf("%d 字节写入 LBA %d（%s），读回一致", len(idb), lba, model.Name()))
+	r.endPhase("ok", fmt.Sprintf("%d 字节写入 LBA %d（%s，原 IDB %s 已备份），读回一致", len(idb), lba, model.Name(), info.Type))
 	return nil
+}
+
+// dropIDBBytes keeps the run accounting honest when the IDB stage is skipped:
+// the bytes were projected in connect() before the device was read.
+func (r *runner) dropIDBBytes() {
+	if r.plan.IDB.Bytes <= 0 {
+		return
+	}
+	r.total -= r.plan.IDB.Bytes
+	r.rep.TotalBytes -= r.plan.IDB.Bytes
+	if r.total < 0 {
+		r.total = 0
+	}
+	if r.rep.TotalBytes < 0 {
+		r.rep.TotalBytes = 0
+	}
+}
+
+func idbTypeNote(info IDBInfo) string {
+	switch info.Type {
+	case IDBTypeNew:
+		return "（New IDB；本工具不会用 rk28-rc4 覆盖它）"
+	case IDBTypeRK28:
+		return "（legacy IDB，rk28-rc4 模型与之同源）"
+	case IDBTypeEmpty:
+		return "（空：没有可保留的块，将按所选模型写入）"
+	default:
+		return "（既非 RKNS 也非 RK28）"
+	}
+}
+
+func orBackupFile(path string) string {
+	if path == "" {
+		return "（仅日志 hex）"
+	}
+	return path
 }
 
 func (r *runner) writeItems(ctx context.Context) error {

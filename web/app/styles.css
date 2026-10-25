@@ -626,3 +626,66 @@ button.danger:not(:disabled):hover {
   min-height: 120px;
   max-height: 300px;
 }
+
+/* --- M4: install, offline and reconnect wizard --------------------------- */
+
+/* Keep the `hidden` attribute authoritative: several blocks below set an
+   explicit display, which would otherwise beat the UA stylesheet. */
+[hidden] {
+  display: none !important;
+}
+
+.badge[data-net="offline"] {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.badge[data-net="online"] {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+#sw-note[data-tone="ok"] {
+  color: var(--ok);
+}
+
+#sw-note[data-tone="warn"] {
+  color: var(--warn);
+}
+
+.reconnect {
+  margin: 10px 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.reconnect h3 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: var(--warn);
+}
+
+.reconnect ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.reconnect li + li {
+  margin-top: 4px;
+}
+
+.reconnect .reconnect-cause {
+  color: var(--warn);
+}
+
+.summary[data-tone="ok"] {
+  border-color: var(--ok);
+}
+
+.summary:empty {
+  display: none;
+}

@@ -311,48 +311,6 @@ func TestBridgeConnectorDrivesTheRealWritePath(t *testing.T) {
 	}
 }
 
-func TestBridgeConnectorStartsFromLoaderWithoutDownloadBoot(t *testing.T) {
-	layout := newTestLayout(t)
-	plan := layout.plan(t)
-	cfg := testSimConfig(plan)
-	cfg.Mode = rockusb.ModeLoader
-	sim := NewSimConnector(cfg)
-
-	// MaskromFirst still prefers maskrom, but the board is already LOADER:
-	// Open must fall back instead of refusing the only usable device, and the
-	// state machine must skip Download Boot.
-	conn := &BridgeConnector{Bridge: &simBridge{conn: sim}, Handle: "sim", MaskromFirst: true}
-	rep, err := runPlan(t, plan, layout, conn, testOptions())
-	if err != nil {
-		t.Fatalf("run over the bridge failed: %v (connector saw %v)", err, conn.lastErr)
-	}
-	if conn.OpenCount() != 1 {
-		t.Fatalf("opens = %d, want 1 (no maskrom -> LOADER re-open)", conn.OpenCount())
-	}
-	if rep.Device.Mode != "LOADER" {
-		t.Errorf("device mode = %q, want LOADER", rep.Device.Mode)
-	}
-	wantWritten := plan.IDB.Bytes
-	for _, it := range plan.Items {
-		wantWritten += it.PaddedSize
-	}
-	if rep.BytesWritten != wantWritten {
-		t.Errorf("bytes written = %d, want %d (no loader over the wire)", rep.BytesWritten, wantWritten)
-	}
-	var boot *PhaseReport
-	for i := range rep.Phases {
-		if rep.Phases[i].Phase == PhaseBoot {
-			boot = &rep.Phases[i]
-		}
-	}
-	if boot != nil {
-		t.Errorf("boot phase = %+v, want Download Boot skipped", *boot)
-	}
-	if !sim.Last().ResetSent() {
-		t.Error("rd was not sent through the bridge transport")
-	}
-}
-
 func TestBridgeConnectorExplainsAMissingDevice(t *testing.T) {
 	empty := &emptyBridge{}
 	conn := &BridgeConnector{Bridge: empty, MaskromFirst: true}
@@ -379,3 +337,37 @@ func (emptyBridge) Open(int, string) (rockusb.Transport, error) {
 	return nil, errors.New("unreachable")
 }
 func (emptyBridge) Close(int) error { return nil }
+
+// SIL-515 started with the board already in LOADER. The old MaskromFirst path
+// failed the first Open in that state, so the runner never reached
+// bootIfNeeded and "already in Loader, skip Download Boot" was unreachable.
+func TestBridgeConnectorStartsFromLoaderWithoutDownloadBoot(t *testing.T) {
+	layout := newTestLayout(t)
+	plan := layout.plan(t)
+	cfg := testSimConfig(plan)
+	cfg.Mode = rockusb.ModeLoader
+	sim := NewSimConnector(cfg)
+
+	conn := &BridgeConnector{Bridge: &simBridge{conn: sim}, Handle: "sim", MaskromFirst: true}
+	rep, err := runPlan(t, plan, layout, conn, testOptions())
+	if err != nil {
+		t.Fatalf("run from LOADER failed: %v (connector saw %v)", err, conn.lastErr)
+	}
+	if conn.OpenCount() != 1 {
+		t.Fatalf("opens = %d, want the already-running LOADER device", conn.OpenCount())
+	}
+	if rep.Device.Mode != "LOADER" {
+		t.Errorf("device mode = %q, want LOADER", rep.Device.Mode)
+	}
+	for _, ph := range rep.Phases {
+		if ph.Phase == PhaseBoot && ph.Status == "ok" {
+			t.Errorf("Download Boot ran even though the device was already in LOADER: %+v", ph)
+		}
+	}
+	if got := sim.Last().Controls(); len(got) != 0 {
+		t.Errorf("Download Boot control transfers = %d, want 0", len(got))
+	}
+	if !rep.OK || !sim.Last().ResetSent() {
+		t.Errorf("run did not finish: ok=%t reset=%t", rep.OK, sim.Last().ResetSent())
+	}
+}
