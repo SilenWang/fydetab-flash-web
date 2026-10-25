@@ -101,6 +101,40 @@ test('the checklist passes only when every pre-flight fact holds', () => {
   assert.match(byId(result, CHECK_PLAN).detail, /none/);
 });
 
+test('the Go device state (numeric mode + modeLabel) passes the same gates', () => {
+  // internal/device serialises MediaMode as a number and adds modeLabel; the
+  // page used to read only `mode`, so a real Loader board looked like neither
+  // maskrom nor LOADER and the write button never unlocked.
+  const realLoader = {
+    devNo: 1,
+    vendorId: 0x2207,
+    productId: 0x350b,
+    bcdUSB: 0x0201,
+    mode: 2,
+    modeLabel: 'Loader',
+  };
+  assert.equal(isLoader(realLoader), true);
+  assert.equal(isMaskrom(realLoader), false);
+  const result = evaluatePreflight({
+    devices: [realLoader],
+    current: 1,
+    loader: goodLoader,
+    facts,
+    eraseMode: 'none',
+    eraseConfirmed: true,
+  });
+  assert.equal(result.ready, true);
+  assert.equal(result.canWrite, true);
+  assert.equal(result.canDb, false);
+  assert.equal(result.readOnly.enabled, true);
+  assert.equal(byId(result, CHECK_MASKROM).status, 'pass');
+  assert.equal(byId(result, CHECK_FIRST_COMMAND).status, 'pass');
+
+  const realMaskrom = { ...realLoader, bcdUSB: 0x0200, mode: 1, modeLabel: 'Maskrom' };
+  assert.equal(isMaskrom(realMaskrom), true);
+  assert.equal(isLoader(realMaskrom), false);
+});
+
 test('a loader built for another chip blocks the write', () => {
   const result = evaluatePreflight({
     devices: [maskrom],

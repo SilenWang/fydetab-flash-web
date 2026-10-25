@@ -53,8 +53,10 @@ func (c *BridgeConnector) Open(ctx context.Context) (rockusb.Transport, rockusb.
 
 	c.mu.Lock()
 	want := rockusb.ModeLoader
+	maskromFirst := false
 	if c.MaskromFirst && c.opens == 0 {
 		want = rockusb.ModeMaskrom
+		maskromFirst = true
 	}
 	c.mu.Unlock()
 
@@ -70,6 +72,14 @@ func (c *BridgeConnector) Open(ctx context.Context) (rockusb.Transport, rockusb.
 	c.record(listed, nil)
 
 	target, ok := c.pick(listed, want)
+	if !ok && maskromFirst {
+		// The board is already booted into LOADER (for example it came back
+		// from a previous session): Download Boot is unnecessary, and the
+		// state machine skips it once it sees Link.Mode == LOADER. Falling
+		// back here keeps "start directly from LOADER" working; a maskrom
+		// device still takes the maskrom path above.
+		target, ok = c.pick(listed, rockusb.ModeLoader)
+	}
 	if !ok {
 		err := fmt.Errorf("没有处于 %s 的 Rockchip 设备（已看到：%s）", want, describeModes(listed))
 		c.record(listed, err)

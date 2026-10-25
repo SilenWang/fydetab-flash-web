@@ -33,15 +33,37 @@ export function currentDevice(devices, current) {
   return devices.length === 1 ? devices[0] : null;
 }
 
+/** deviceMode normalises the mode a listed device reports.
+ *
+ * The Go core puts both a numeric enum (mode: 1=maskrom, 2=loader) and the
+ * `ld` label (modeLabel: "Maskrom" / "Loader") on each device. Older callers
+ * (and the unit tests) pass a plain `mode` string, so accept either shape:
+ * reading only `mode` made every real board look like "not maskrom, not
+ * LOADER" and kept the write button disabled.
+ */
+export function deviceMode(device) {
+  if (!device) return 'UNKNOWN';
+  if (typeof device.mode === 'string' && device.mode) return device.mode.toUpperCase();
+  if (typeof device.modeLabel === 'string' && device.modeLabel) return device.modeLabel.toUpperCase();
+  switch (Number(device.mode)) {
+    case 1:
+      return 'MASKROM';
+    case 2:
+      return 'LOADER';
+    default:
+      return 'UNKNOWN';
+  }
+}
+
 /** isMaskrom reports whether a listed device is a bare maskrom board. */
 export function isMaskrom(device) {
   if (!device) return false;
-  return device.mode === 'MASKROM' && ((device.bcdUSB ?? 0) & 1) === 0;
+  return deviceMode(device) === 'MASKROM' && ((device.bcdUSB ?? 0) & 1) === 0;
 }
 
 /** isLoader reports whether a listed device has a usbplug (LOADER mode). */
 export function isLoader(device) {
-  return Boolean(device) && device.mode === 'LOADER';
+  return deviceMode(device) === 'LOADER';
 }
 
 /**
@@ -185,7 +207,7 @@ export function evaluatePreflight(input = {}) {
       status: 'fail',
       detail: `计划 ${facts.items} 项、共 ${formatBytes(facts.totalBytes)}；${facts.uncoveredTails} 个分区尾部未覆盖（${formatBytes(
         facts.uncoveredBytes,
-      )}，含 ${facts.uncoveredParts || '?'}）——请在下面显式选择处置并打勾。`,
+      )}，含 ${facts.uncoveredParts || facts.uncoveredPartitions || '?'}）——请在下面显式选择处置并打勾。`,
     });
   } else {
     items.push({
@@ -194,7 +216,7 @@ export function evaluatePreflight(input = {}) {
       status: 'pass',
       detail: `计划 ${facts.items} 项、共 ${formatBytes(facts.totalBytes)}；未覆盖 ${formatBytes(
         facts.uncoveredBytes,
-      )}（${facts.uncoveredParts || '无'}）→ ${facts.eraseMode}${
+      )}（${facts.uncoveredParts || facts.uncoveredPartitions || '无'}）→ ${facts.eraseMode}${
         facts.uncoveredTails > 0 ? '（已确认）' : '（没有未覆盖区间）'
       }。`,
     });

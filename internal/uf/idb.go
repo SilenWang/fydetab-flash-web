@@ -3,6 +3,7 @@ package uf
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
 )
@@ -13,20 +14,17 @@ import (
 // against a real device yet, so it sits behind this interface instead of being
 // hard-coded in the writer.
 //
-// What is implemented here (ModelRK28RC4) comes from the public
-// reimplementation rk_image_tool (src/common/idblock.c, rc4.c):
+// Two byte layouts are supported behind IDBModel:
 //
-//  1. round the loader up to a multiple of 512 bytes, zero padded;
-//  2. RC4 every 512-byte sector independently with the fixed 16-byte key,
-//     re-initialising the cipher state for each sector;
-//  3. write the result at LBA 64 (RK_IDB_SECTOR).
+//   - "new IDB" (default): the loader's ENTRYLOADER FlashHead/FlashData/
+//     FlashBoot segments, each 2 KiB aligned and concatenated, with an
+//     optional per-512-byte RC4 pass controlled by the loader header;
+//   - "legacy whole-loader": the RKFW loader blob padded to 512 bytes and
+//     RC4'd per sector.
 //
-// **待真机核对**: the model has never been diffed against an official
-// `upgrade_tool uf` log or against real flash. In particular it is not settled
-// whether `uf` writes the RKFW loader blob verbatim (this model), or the
-// RKBOOT FlashData/FlashBoot entries concatenated and 2048-byte aligned (the
-// path rkdeveloptool's `ul` takes for new IDBs). Both stay behind the interface;
-// a device trace can settle it without touching the state machine.
+// The device tells us which one it expects by the New IDB capability and by
+// the header at LBA 64 ("RKNS" for the new layout). Keep both behind the
+// interface; a hardware run records which model produced the bytes.
 const (
 	// IDBDefaultLBA is RK_IDB_SECTOR: the sector SD_Firmware_Tool and
 	// rk_image_tool write the IDB copy at.
@@ -38,6 +36,11 @@ const (
 // Model names are part of the log schema: a hardware run records which model
 // produced the bytes, so the trace can later confirm or refute it.
 const (
+	// ModelRKBOOT is the New IDB layout used by RK3588 devices: FlashHead,
+	// FlashData and FlashBoot from the loader's ENTRYLOADER table, each padded
+	// to 2 KiB and concatenated, with an optional per-512-byte RC4 pass when
+	// the loader header asks for it. This is the default.
+	ModelRKBOOT    = "rkboot-new-idb"
 	ModelRK28RC4   = "rk28-rc4"
 	ModelRawLoader = "raw-loader"
 )
@@ -60,15 +63,20 @@ type LoaderInput struct {
 type IDBModel interface {
 	// Name is stable and appears in the JSON log.
 	Name() string
-	// Verified reports whether this byte model has been confirmed against a
-	// real `upgrade_tool uf` run. Honest false is the point: the runner logs
-	// it instead of implying the bytes are known-good.
+	// Verified reports whether this byte model has been confirmed by a real
+	// flash-and-boot run. Honest false is the point: the runner logs it
+	// instead of implying the bytes are known-good.
 	Verified() bool
 	// Build returns the IDB bytes; their length is the gpt stage's byte count.
 	Build(in LoaderInput) ([]byte, error)
 }
 
-// NewRK28RC4Model returns the default, unverified model described above.
+// NewRKBOOTModel returns the New IDB model used by RK3588 devices.
+func NewRKBOOTModel() IDBModel { return rkbootIDB{} }
+
+// NewRK28RC4Model returns the legacy whole-loader model described above. It is
+// kept only so an old log/plan can be reproduced; it is not what RK3588
+// firmware expects for a "New IDB" device.
 func NewRK28RC4Model() IDBModel { return rk28rc4{} }
 
 // NewRawLoaderModel returns the loader padded to 512 bytes with no
@@ -80,7 +88,9 @@ func NewRawLoaderModel() IDBModel { return rawLoader{} }
 // IDBModelByName resolves the --idb-model values.
 func IDBModelByName(name string) (IDBModel, error) {
 	switch name {
-	case "", ModelRK28RC4:
+	case "", ModelRKBOOT:
+		return NewRKBOOTModel(), nil
+	case ModelRK28RC4:
 		return NewRK28RC4Model(), nil
 	case ModelRawLoader:
 		return NewRawLoaderModel(), nil
@@ -89,7 +99,60 @@ func IDBModelByName(name string) (IDBModel, error) {
 }
 
 // IDBModelNames lists the selectable models for --help and docs.
-func IDBModelNames() []string { return []string{ModelRK28RC4, ModelRawLoader} }
+func IDBModelNames() []string { return []string{ModelRKBOOT, ModelRK28RC4, ModelRawLoader} }
+
+type rkbootIDB struct{}
+
+func (rkbootIDB) Name() string   { return ModelRKBOOT }
+func (rkbootIDB) Verified() bool { return false }
+
+func (rkbootIDB) Build(in LoaderInput) ([]byte, error) {
+	img := in.Parsed
+	if img == nil {
+		var err error
+		img, err = rockusb.ParseLoaderImage(in.Container)
+		if err != nil {
+			return nil, fmt.Errorf("new IDB: parse loader: %w", err)
+		}
+	}
+	if len(img.EntriesLoader) == 0 {
+		return nil, fmt.Errorf("new IDB: loader has no ENTRYLOADER table (FlashHead/FlashData/FlashBoot)")
+	}
+	segment := func(want string) ([]byte, error) {
+		for _, e := range img.EntriesLoader {
+			if strings.EqualFold(e.Name, want) {
+				b := img.Segment(e)
+				if int64(len(b)) != int64(e.DataSize) {
+					return nil, fmt.Errorf("new IDB: %s is %d bytes, want %d", want, len(b), e.DataSize)
+				}
+				out := make([]byte, len(b))
+				copy(out, b)
+				return out, nil
+			}
+		}
+		return nil, fmt.Errorf("new IDB: loader has no %s entry", want)
+	}
+	var idb []byte
+	for _, name := range []string{"FlashHead", "FlashData", "FlashBoot"} {
+		seg, err := segment(name)
+		if err != nil {
+			return nil, err
+		}
+		// Each segment sits on a 2 KiB boundary in the New IDB.
+		if rem := len(seg) % 2048; rem != 0 {
+			seg = append(seg, make([]byte, 2048-rem)...)
+		}
+		idb = append(idb, seg...)
+	}
+	// When the loader header requests RC4, the transform is applied one
+	// 512-byte sector at a time with the same fixed key as the legacy model.
+	if img.RC4Flag != 0 {
+		for off := 0; off < len(idb); off += IDBBlockSize {
+			rc4(rk28RC4Key, idb[off:off+IDBBlockSize])
+		}
+	}
+	return idb, nil
+}
 
 type rk28rc4 struct{}
 

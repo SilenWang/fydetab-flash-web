@@ -84,33 +84,31 @@ connect ─┬─ MASKROM ──> Download Boot(ul) ──> 等待重新枚举�
   这是有意的：中途失败的 item 在 flash 上可能是半截内容，按 item 粒度重写比尝试续到扇区更安全。
 - `rd` 之后设备会重新枚举，浏览器授权同样可能失效；这是成功路径的已知行为，不是失败。
 
-## 5. IDB 字节模型（**待真机核对**）
+## 5. IDB 字节模型
 
-`gpt` 阶段 = Prepare IDB + Download IDB。字节模型抽成 `uf.IDBModel`，默认实现
-`rk28-rc4`（来自 `rk_image_tool/src/common/idblock.c`、`rc4.c`）：
+`gpt` 阶段 = Prepare IDB + Download IDB；默认模型 `rkboot-new-idb`。
 
-1. loader 补齐到 512 字节的整数倍（零填充）；
-2. **每个 512 字节扇区独立**用固定 16 字节 key 做 RC4（每个扇区重新初始化 S 盒）；
-3. 结果写到 **LBA 64**（`RK_IDB_SECTOR`）。
+New IDB 由 RKBOOT loader 的三段组成：
 
-因此 IDB 字节数 = `align512(RKFW loader_length)`，与 M2 dry-run 的 `gpt` 阶段字节数一致。
-另一个可选模型 `raw-loader`（只补齐、不加密）用于真机 A/B：如果设备能用明文字节启动，说明
-RC4 这一层是错的。
+1. 从 RKFW loader（archive 里的 `bootloader`/`MiniLoaderAll.bin`）的
+   **ENTRYLOADER** 表（type 4）取 `FlashHead`、`FlashData`、`FlashBoot`；
+2. 每段按 2048 字节对齐后依次拼接（FlashHead 在 0，FlashData 在
+   `ceil(head/2048)*2048`，FlashBoot 紧随其后）；
+3. loader 头要求加密时，对拼接结果每 512 字节做一次相同的固定 key RC4；
+4. 写到 LBA 64。
 
-**尚未确认**（必须用真机或官方 `upgrade_tool uf` 日志核对，SIL-511/SIL-515 恢复后回填）：
+v23 loader 的三段是 2048 + 73728 + 178176 = **253,952 B**，生成的 IDB 以 `RKNS`
+开头；旧模型 `rk28-rc4`（整份 loader 按 512 字节 RC4，422,400 B）是错误布局，只保留
+用于复现旧日志。`raw-loader` 仍可用于 A/B。
 
-- `uf` 写的是整个 RKFW loader blob，还是 RKBOOT 里 `FlashData`/`FlashBoot` 条目按 2048 字节
-  对齐拼接（rkdeveloptool 的 `ul` 对新 IDB 走后者）？当前实现是前者，`LoaderInput.Parsed`
-  已经保留了解析后的 RKBOOT，替换模型不需要改状态机。
-- 是否所有 RK3588 设备都使用 RC4 路径（`Rc4DisableFlag` 的真实语义）。
-- LBA 64 是否对 RK3588 + eMMC 成立。
-
-日志里固定记录 `idb.model` 与 `idb.verified=false`（`--idb-model` 可切换），这样一份真机日志
-能直接对应到产生字节的模型。
+`Verified()` 仍为 false：字节布局已经在真实镜像上核对过，但还没有一次“用新模型刷完
+并启动”的真机确认；真机日志仍会记录 `idb.model`。
 
 ## 6. 写入前的擦除语义（未确认，因此显式）
 
-`STATE` 分区 5 GiB、镜像只带约 1 GiB payload，剩余 4 GiB 不在镜像描述范围内。`uf` 不静默决定：
+STATE 的 64 位 `size` 高字为 1，镜像带的是**完整的 5 GiB** payload（与 parameter 的
+`0xa0006d` 扇区逐字节相等），不是“1 GiB + 4 GiB 未覆盖”。真正未覆盖的只有 `resource`
+的 3.64 MiB 尾部。`uf` 仍然不静默决定：
 
 - `--erase-tail=none`（默认）：只写 payload，尾部保留原内容；
 - `--erase-tail=fill`：用 `WRITE_LBA` 把尾部写 0xFF（对应 `EraseEmmcByWriteLBA`）；

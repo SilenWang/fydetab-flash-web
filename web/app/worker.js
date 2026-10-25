@@ -133,7 +133,7 @@ async function resolveImage(msg) {
   throw new Error('no image supplied (need file or demo)');
 }
 
-async function runUf(msg, call) {
+async function runUf(msg, call, replyType = 'uf-result') {
   const source = await resolveImage(msg);
   const onEvent = (kind, payload) => {
     let parsed = payload;
@@ -145,7 +145,7 @@ async function runUf(msg, call) {
     post({ type: 'uf-event', id: msg.id, kind, payload: parsed });
   };
   const text = await call(source, msg.opts ?? {}, onEvent);
-  post({ type: 'uf-result', id: msg.id, result: JSON.parse(text) });
+  post({ type: replyType, id: msg.id, result: JSON.parse(text) });
 }
 
 // --- boot -------------------------------------------------------------------
@@ -228,7 +228,9 @@ self.onmessage = async (event) => {
       }
       case 'uf-plan': {
         if (!globalThis.rk3588) throw new Error('core is not ready');
-        await runUf(msg, (source, opts, onEvent) => globalThis.rk3588.ufPlan(source, opts, onEvent));
+        // Plan replies are settled by the caller (planImage), not rendered as
+        // a write result: the two share a shape but a plan has no `run`.
+        await runUf(msg, (source, opts, onEvent) => globalThis.rk3588.ufPlan(source, opts, onEvent), 'uf-plan-result');
         return;
       }
       case 'uf-run': {

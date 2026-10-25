@@ -75,7 +75,7 @@ func TestRecorderWritesHeaderTransfersProgressAndResult(t *testing.T) {
 		t.Fatal("no header record")
 	}
 	optsMap, _ := header["options"].(map[string]any)
-	if optsMap["idbModel"] != ModelRK28RC4 || optsMap["idbVerified"] != false {
+	if optsMap["idbModel"] != ModelRKBOOT || optsMap["idbVerified"] != false {
 		t.Fatalf("log options = %v", optsMap)
 	}
 	if optsMap["eraseTail"] != string(EraseNone) {

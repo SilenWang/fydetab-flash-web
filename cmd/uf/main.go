@@ -236,6 +236,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		NoReset:   *noReset,
 		StartItem: *resumeFrom,
 		IDB:       model,
+		// This CLI only runs mock/replay; a real write must exercise the
+		// signature and read-back gates.
+		SkipSignatureCheck: true,
+		SkipReadback:       true,
 		Event:     func(ev uf.Event) { writeEvent(stderr, ev) },
 	}
 	var (

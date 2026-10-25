@@ -116,3 +116,29 @@ func TestIDBModelUsesParsedRKBOOTWhenAvailable(t *testing.T) {
 		t.Fatalf("IDB length = %d, want align512(%d)", len(idb), len(loader))
 	}
 }
+
+func TestNewIDBModelAssemblesTheLoaderEntries(t *testing.T) {
+	loader := rkbootLoader(t)
+	idb, err := NewRKBOOTModel().Build(LoaderInput{Container: loader})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	// FlashHead 2048 + FlashData 1024 + FlashBoot 512, each 2 KiB aligned.
+	if len(idb) != 6144 {
+		t.Fatalf("IDB length = %d, want 6144", len(idb))
+	}
+	// The fixture stores a plaintext FlashHead (ucRc4Flag=0), so the New IDB
+	// starts with its magic directly. The real image uses ucRc4Flag=1 and the
+	// same code path decrypts the stored segments; the real-image dry run
+	// checks the resulting RKNS header.
+	if string(idb[:4]) != "RKNS" {
+		t.Fatalf("first sector starts %q, want RKNS", idb[:4])
+	}
+	legacy, err := NewRK28RC4Model().Build(LoaderInput{Container: loader})
+	if err != nil {
+		t.Fatalf("legacy Build: %v", err)
+	}
+	if len(legacy) == len(idb) {
+		t.Fatal("legacy whole-loader model produced the New IDB length; models are not distinct")
+	}
+}

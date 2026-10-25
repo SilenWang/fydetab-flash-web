@@ -1,6 +1,7 @@
 package uf
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,6 +25,9 @@ const (
 	PhaseWrite = "wl"
 	PhaseErase = "erase"
 	PhaseReset = "rd"
+	// PhaseGate is the local pre-write signature check; it is not an
+	// upgrade_tool stage.
+	PhaseGate = "gate"
 )
 
 // Connector is the device side of a uf run. In the browser it is the WebUSB
@@ -321,6 +325,9 @@ func (r *runner) run(ctx context.Context) error {
 	// The loader check runs before the device is opened: a wrong loader must
 	// be refused without sending a single byte.
 	if err := r.checkLoaderPlan(); err != nil {
+		return err
+	}
+	if err := r.checkSignatureGate(); err != nil {
 		return err
 	}
 	if err := r.connect(ctx); err != nil {
@@ -753,11 +760,20 @@ func (r *runner) downloadIDB(ctx context.Context) error {
 	r.rep.IDB = &IDBReport{LBA: lba, Bytes: int64(len(idb)), PlannedBytes: r.plan.IDB.Bytes,
 		Model: model.Name(), Verified: model.Verified()}
 
+	if !r.opts.SkipSignatureCheck {
+		if err := checkIDBMagic(idb); err != nil {
+			return r.fail(PhaseIDB, "", ErrSignature, err.Error(),
+				"IDB 不是 New IDB（RKNS）；确认 ENTRYLOADER/RC4 模型，拒绝写入。", nil)
+		}
+	}
 	itemDone := int64(0)
 	if err := r.writeBuffer(ctx, PhaseIDB, "", lba, idb, &itemDone, int64(len(idb))); err != nil {
 		return err
 	}
-	r.endPhase("ok", fmt.Sprintf("%d 字节写入 LBA %d（%s，待真机核对）", len(idb), lba, model.Name()))
+	if err := r.verifyReadback(lba, idb, 0, "IDB"); err != nil {
+		return err
+	}
+	r.endPhase("ok", fmt.Sprintf("%d 字节写入 LBA %d（%s），读回一致", len(idb), lba, model.Name()))
 	return nil
 }
 
@@ -825,6 +841,9 @@ func (r *runner) writeItem(ctx context.Context, it Item) error {
 		r.rep.BytesWritten += n
 		itemDone += n
 		r.progress(PhaseWrite, it.Name, itemDone, it.PaddedSize, "")
+	}
+	if err := r.verifyItemReadback(it); err != nil {
+		return err
 	}
 	return nil
 }
@@ -923,6 +942,90 @@ func (r *runner) readAt(off, length int64) ([]byte, error) {
 		return nil, fmt.Errorf("short read at offset 0x%x: %d of %d bytes", off, n, length)
 	}
 	return buf, nil
+}
+
+func (r *runner) checkSignatureGate() error {
+	if r.opts.SkipSignatureCheck {
+		return nil
+	}
+	r.beginPhase(PhaseGate, "Image signature pre-check")
+	checked, err := checkPlanSignatures(r.src, r.plan.Items)
+	if err != nil {
+		return r.fail(PhaseGate, "", ErrSignature, err.Error(),
+			"待写 item 的内容与分区类型不匹配；这通常是镜像偏移解析错误。拒绝写入。", err)
+	}
+	r.endPhase("ok", fmt.Sprintf("%d 个 item 签名匹配", checked))
+	return nil
+}
+
+const readbackWindow = 4 << 10
+
+// verifyItemReadback compares the first and last 4 KiB of an item with the
+// source. Sending bytes successfully is not the same as the device holding
+// them; this is the success criterion the state machine relies on.
+func (r *runner) verifyItemReadback(it Item) error {
+	if r.opts.SkipReadback {
+		return nil
+	}
+	n := int64(readbackWindow)
+	if it.PaddedSize < n {
+		n = it.PaddedSize
+	}
+	ranges := []struct{ off, n int64 }{{0, n}}
+	if it.PaddedSize > n {
+		ranges = append(ranges, struct{ off, n int64 }{it.PaddedSize - n, n})
+	}
+	for _, rg := range ranges {
+		if err := r.verifyRange(it, rg.off, rg.n); err != nil {
+			return err
+		}
+	}
+	r.event(PhaseWrite, "info", it.Name, fmt.Sprintf("读回校验 ok（首/尾 %d B）", n))
+	return nil
+}
+
+func (r *runner) verifyRange(it Item, off, n int64) error {
+	want, err := r.readAt(it.FileOffset+off, n)
+	if err != nil {
+		return r.fail(PhaseWrite, it.Name, rockusb.ErrFailed,
+			fmt.Sprintf("读回校验时读取镜像 %s 失败: %v", it.Name, err), "确认镜像文件可读。", err)
+	}
+	got, err := r.dev.read.ReadLBAs(it.TargetLBA+uint32(off/SectorSize), int(n/SectorSize))
+	if err != nil {
+		if CodeOf(err) == rockusb.ErrDeviceNotSupport {
+			r.event(PhaseWrite, "warn", it.Name, "设备不支持 READ_LBA，跳过写后读回校验")
+			return nil
+		}
+		return r.fail(PhaseWrite, it.Name, CodeOf(err), fmt.Sprintf("读回 %s 失败: %v", it.Name, err), "读回失败时不要继续写。", err)
+	}
+	if !bytes.Equal(got, want) {
+		return r.fail(PhaseWrite, it.Name, ErrReadback,
+			fmt.Sprintf("读回校验失败 %s offset=%d: flash 与镜像不一致", it.Name, off),
+			"停止写入；设备内容与镜像不一致，先保留日志再排查。", nil)
+	}
+	return nil
+}
+
+func (r *runner) verifyReadback(lba uint32, data []byte, srcOff int64, label string) error {
+	if r.opts.SkipReadback {
+		return nil
+	}
+	if data == nil {
+		return nil
+	}
+	got, err := r.dev.read.ReadLBAs(lba, len(data)/SectorSize)
+	if err != nil {
+		if CodeOf(err) == rockusb.ErrDeviceNotSupport {
+			r.event(PhaseIDB, "warn", "", "设备不支持 READ_LBA，跳过 IDB 读回校验")
+			return nil
+		}
+		return r.fail(PhaseIDB, "", CodeOf(err), fmt.Sprintf("读回 %s 失败: %v", label, err), "读回失败时不要继续写。", err)
+	}
+	if !bytes.Equal(got, data) {
+		return r.fail(PhaseIDB, "", ErrReadback, fmt.Sprintf("读回校验失败 %s", label),
+			"停止写入；IDB 写后内容与镜像不一致。", nil)
+	}
+	return nil
 }
 
 func (r *runner) writeBuffer(ctx context.Context, phase, item string, lba uint32, data []byte, itemDone *int64, itemTotal int64) error {

@@ -120,6 +120,10 @@ function onWorkerMessage(event) {
       settle(msg);
       renderUfResult(msg.result);
       break;
+    case 'uf-plan-result':
+      // The plan is rendered by planImage() when its request resolves.
+      settle(msg);
+      break;
     case 'uf-event':
       renderUfEvent(msg);
       break;
@@ -268,6 +272,10 @@ function runDb() {
 
 function planOptions() {
   const opts = { eraseTail: state.eraseMode, verify: false };
+  // Use the capacity the board reported, so the plan's GPT geometry matches
+  // the real 233 GiB flash instead of the parameter table's minimum disk.
+  const sectors = state.lastInfo?.flash?.flashSizeSectors;
+  if (sectors > 0) opts.flashSectors = sectors;
   if (state.loaderOverride) {
     opts.loaderBytes = state.loaderOverride.bytes;
     opts.loaderName = state.loaderOverride.name;
@@ -728,7 +736,9 @@ function renderResult(result) {
     renderDevices(result.state);
   }
   if (result.info) {
-    state.lastInfo = result.info;
+    // Each `info` sub-command returns only its own block; merge so a later
+    // `info storage` does not erase the flash capacity needed by planOptions.
+    state.lastInfo = { ...(state.lastInfo ?? {}), ...result.info };
     renderInfo(result.info);
   }
   if (result.loader) {

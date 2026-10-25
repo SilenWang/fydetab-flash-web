@@ -152,7 +152,17 @@ func chipMatches(want, got string) bool {
 	if w == "" || g == "" {
 		return true
 	}
-	return w == g
+	if w == g {
+		return true
+	}
+	// The device answers READ_CHIP_INFO with Rockchip's 4-byte chip tag, whose
+	// bytes are printed in reverse order: an RK3588 (tag 0x33353838) shows up
+	// as "8853". The image header and the loader's supportChip use the normal
+	// order, so accept the reversed 4-digit form as the same family.
+	if len(w) == 4 && len(g) == 4 {
+		return string([]byte{w[3], w[2], w[1], w[0]}) == g
+	}
+	return false
 }
 
 // chipDigits normalises "RK3588", "rk3588s" and "3588" to "3588" so the image
