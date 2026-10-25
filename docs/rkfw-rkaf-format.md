@@ -282,8 +282,8 @@ v23.0-SP1 镜像也是 0，那么 `uf` 在写入前就需要一个明确的产�
 
 ## 6. GPT 计划
 
-parameter 定义的是分区表，GPT 字节本身不随镜像分发，由设备上的 loader 在写
-`parameter` 时生成。`internal/gpt` 复现目标几何：
+parameter 定义的是分区表，GPT 字节本身不随镜像分发：主机按 parameter 生成后写进设备。
+`internal/gpt` 既复现目标几何，也负责序列化与解析：
 
 ```
 LBA 0          protective MBR (0xEE)
@@ -295,8 +295,13 @@ LBA N-33..N-2  backup entry array
 LBA N-1        backup header
 ```
 
-每项的 `first/last LBA` 直接取 parameter 的 offset/size，**不做 64 扇区圆整**：目前没有
-证据表明 Fydetab Duo 的 loader 会圆整，而这正是需要和真机 GPT 对照的地方。
+- `Encode` 输出主表 34 扇区 + 备份表 33 扇区；GUID 由分区表内容确定性派生，同一张表重写
+  得到逐字节相同的结果；`Parse` 校验签名、两个头的 CRC、条目数组的 CRC 与条目数。
+- 每项的 `first/last LBA` 直接取 parameter 的 offset/size，**不做 64 扇区圆整**。
+- `N` 是设备 `Get FlashInfo` 报告的容量，不用镜像大小推；`uf --dry-run` 里给
+  `--flash-sectors` 才是真实值，否则是派生值并明确标注。
+- 参考设备的 12 行（起始 LBA + 大小）写在 `internal/gpt/encode_test.go`，用真实
+  parameter 片段逐项断言。
 
 r132 在未给 `--flash-sectors` 时派生的磁盘是 **22,028,495 扇区**（最后一个分区末尾
 22,028,461 + 34），并明确标注为派生值。`--flash-sectors` 可指定真实 flash 大小。
@@ -306,11 +311,14 @@ r132 在未给 `--flash-sectors` 时派生的磁盘是 **22,028,495 扇区**（�
 | 阶段 | 字节数 | r132 实测 |
 |---|---|---|
 | `ul` | RKFW `loader_length` | 412,096 |
-| `gpt` | `align512(loader_length)` | 412,160 |
+| `gpt` | IDB + 主表 34 扇区 + 备份表 33 扇区 + parameter 8 份 | 462,848 |
 | `wl <item>` | item 的归档槽位（`PaddedSize`） | 7 项，合计 4,052,678,656 |
 | `rd` | 0 | `--noreset` 时标注跳过 |
 
-`uf --dry-run` 在 r132 上跑通，总计 4,053,502,912 字节（含 ul + gpt）。
+r132 的 `gpt` 阶段 = 412,160（legacy IDB 尺寸，片段里没有 loader 字节）+ 34,304（两张表）
++ 16,384（8 × 2 KiB parameter）。`uf --dry-run` 在 r132 上跑通，总计 4,053,953,600 字节
+（含 ul + gpt）。真实 v23 镜像的 IDB 是 253,952 B，`gpt` 阶段为 304,640 B，总量仍在
+7.79 GiB 量级。
 
 item 到分区的映射规则：
 
@@ -319,13 +327,12 @@ item 到分区的映射规则：
 3. 两者都存在但指向不同分区 → warning，并采用 `nand_addr`；
 4. 都对不上 → 不进入写入计划，明确 warning。
 
-r132 实测：`package-file`、`bootloader`（`nand_addr = 0xFFFFFFFF` 且不是分区名）和
-`parameter`（`nand_addr = 0`，没有起始 LBA 为 0 的分区）都落到第 4 条，不进入 `wl`；
-其余 7 项按 `nand_addr` 精确命中分区。
+r132 实测：`package-file`、`bootloader`（`nand_addr = 0xFFFFFFFF` 且不是分区名）不进
+`wl`；其余 7 项按 `nand_addr` 精确命中分区。
 
-> **未解决（M3 决策项）**：真实 `uf` 必然要写 `parameter`（loader 靠它生成 GPT），而当前
-> 计划里它既没有目标 LBA、也不在 `gpt` 阶段的字节里。M2 的 `gpt` 阶段只覆盖 IDB；
-> 写 `parameter` 归 M3（SIL-517）在写入编排里定位置，本阶段只如实报出来。
+`parameter` 项单独处理：它不是分区 payload，而是 `gpt` 阶段写入的块（原样字节，8 份副本，
+带 PARM CRC）。计划里它的 action 是 `parameter`，不会出现在 `wl` 里，也不占分区目标 LBA
+——这样既不会把它写到 LBA 0，也不会重复写两遍。
 
 覆盖计算用槽位（padding 也写入）。分区大于 payload 时记入 `uncovered`：
 **未覆盖区间不会被写入或擦除**，旧内容保留，是否擦除取决于设备/loader，镜像本身给不出答案。
@@ -362,9 +369,12 @@ STATE 的 4 GiB 缺口被显式列出（这就是 issue 要求「不要静默」
 2. `rkaf-crc-trailer` 在官方镜像里是否也是 `00 00 00 00`（决定 M3 的写入前校验策略）。
    同上，第 9 节的输出里会直接打印这个值。
 3. 真机 GPT（`sgdisk -p` / 探针读 GPT）与 `uf --dry-run` 的逐项对照，含 loader 是否会
-   圆整 LBA。
-4. `ul`/`gpt` 两个阶段的字节数是否与 `upgrade_tool uf` 的实际传输量一致（IDB 假设、LBA 64）。
-5. `parameter` 在真实 `uf` 里的写入位置（见第 7 节）。
+   圆整 LBA。**部分已确认**：恢复后的设备读出的 12 个分区起始 LBA 与 parameter 完全一致，
+   已作为 `internal/gpt/encode_test.go` 的对照表。
+4. ~~`parameter` 在真实 `uf` 里的写入位置~~：已定（见第 6/7 节与
+   `docs/uf-write-path.md` 第 5.3 节：保留区起始 `flash_offset + 0x2000`、间隔
+   `保留区扇区数 >> 3`、8 份）。仍需一次真机写入确认设备能读到它们。
+5. `ul`/`gpt` 两个阶段的字节数是否与厂商工具的实际传输量一致（IDB 假设、LBA 64、副本份数）。
 6. r132 那 `2^32` 字节尾部 padding 的成因（与 STATE 的 4 GiB 未覆盖区间数值相同，但镜像
    本身无法证明两者相关）。
 

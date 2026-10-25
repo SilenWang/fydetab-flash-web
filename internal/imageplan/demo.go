@@ -24,10 +24,9 @@ import (
 const DemoImageName = "demo-update.img (synthetic)"
 
 const demoCmdline = `CMDLINE: mtdparts=rk29xxnand:` +
-	`0x00000004@0x00000040(parameter),` +
-	`0x00000008@0x00000044(uboot),` +
-	`0x00000040@0x0000004c(boot),` +
-	`0x00002000@0x0000008c(state)`
+	`0x00000800@0x00004000(uboot),` +
+	`0x00002000@0x00004800(boot),` +
+	`0x00002000@0x00006800(state)`
 
 // DemoLoader builds the RKBOOT blob inside DemoImage: one 0x0471 segment and
 // one 0x0472 segment, a fixed build time and the RK3588 chip tag.
@@ -108,11 +107,21 @@ func DemoImage() []byte {
 
 	type item struct {
 		name string
-		lba  uint32
-		data []byte
+		// lba is the entry's flash offset; partSize is its reserved area in
+		// sectors (the payload's own size when zero).
+		lba      uint32
+		partSize uint32
+		data     []byte
 	}
-	param := make([]byte, 2048)
-	copy(param, demoCmdline)
+	// The parameter entry is the real thing's shape: flash offset 0 with a
+	// 0x4000-sector reserved area, PARM-wrapped so its checksum verifies. The
+	// gpt stage writes it (replicated), not a partition payload.
+	paramText := []byte(demoCmdline)
+	param := make([]byte, 8+len(paramText)+4)
+	copy(param, "PARM")
+	binary.LittleEndian.PutUint32(param[4:8], uint32(len(paramText)))
+	copy(param[8:], paramText)
+	binary.LittleEndian.PutUint32(param[8+len(paramText):], rkcrc.Checksum(paramText))
 	uboot := make([]byte, 2048)
 	for i := range uboot {
 		uboot[i] = byte(i * 5)
@@ -131,10 +140,10 @@ func DemoImage() []byte {
 		state[i] = byte(i * 13)
 	}
 	items := []item{
-		{"parameter", 0x40, param},
-		{"uboot", 0x44, uboot},
-		{"boot", 0x4c, boot},
-		{"state", 0x8c, state},
+		{"parameter", 0, 0x4000, param},
+		{"uboot", 0x4000, 0x800, uboot},
+		{"boot", 0x4800, 0x2000, boot},
+		{"state", 0x6800, 0x2000, state},
 	}
 
 	rkaf := make([]byte, rkfw.RKAFHeaderSize)
@@ -151,9 +160,13 @@ func DemoImage() []byte {
 		copy(slot[0:32], it.name)
 		copy(slot[32:92], "Image/"+it.name)
 		padded := (len(it.data) + 511) / 512 * 512
-		binary.LittleEndian.PutUint32(slot[92:96], uint32(padded/512)) // partition sectors
+		partSize := it.partSize
+		if partSize == 0 {
+			partSize = uint32(padded / 512)
+		}
+		binary.LittleEndian.PutUint32(slot[92:96], partSize) // partition / reserved sectors
 		binary.LittleEndian.PutUint32(slot[96:100], pos)
-		binary.LittleEndian.PutUint32(slot[100:104], it.lba)
+		binary.LittleEndian.PutUint32(slot[100:104], it.lba) // flash offset in sectors
 		binary.LittleEndian.PutUint32(slot[104:108], uint32((padded+2047)/2048))
 		binary.LittleEndian.PutUint32(slot[108:112], uint32(len(it.data)))
 		buf := make([]byte, padded)

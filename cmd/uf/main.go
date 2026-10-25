@@ -34,7 +34,7 @@ import (
 
 const (
 	toolName      = "uf"
-	versionString = "M3b (image-embedded loader + pre-flight self-check; mock/replay unchanged)"
+	versionString = "M3e (GPT + parameter write stage; mock/replay unchanged)"
 )
 
 const (
@@ -252,7 +252,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		SkipReadback:       true,
 		RewriteIDB:         *rewriteIDB,
 		IDBBackupPath:      *idbBackup,
-		Event:     func(ev uf.Event) { writeEvent(stderr, ev) },
+		Event:              func(ev uf.Event) { writeEvent(stderr, ev) },
 	}
 	var (
 		logWriter io.WriteCloser
@@ -386,6 +386,7 @@ func writeText(w io.Writer, rep *Report) {
 	writeLoader(w, rep)
 	writePayloads(w, rep)
 	writeStages(w, rep)
+	writeGPTStage(w, rep)
 	writePartitions(w, rep)
 	writeUncovered(w, rep)
 	writeErase(w, rep)
@@ -555,6 +556,30 @@ func writeStages(w io.Writer, rep *Report) {
 			st.Phase, st.Name, st.Detail, groupDigits(uint64(st.Bytes)), st.Progress)
 	}
 	tw.Flush()
+}
+
+// writeGPTStage prints where the partition table and the parameter block go.
+// The dry run must show them because they are written before any payload, and
+// the backup table's position depends on the flash size the device reports.
+func writeGPTStage(w io.Writer, rep *Report) {
+	if rep.ParameterWrite == nil {
+		return
+	}
+	p := rep.ParameterWrite
+	fmt.Fprintf(w, "\ngpt stage (partition table + parameter, %s + %s):\n",
+		humanBytes(GPTPrimaryBytes+GPTBackupBytes), humanBytes(p.TotalBytes()))
+	fmt.Fprintf(w, "  primary GPT   LBA 0, %d sectors (protective MBR + header + entry array)\n", GPTPrimarySectors)
+	if rep.GPT != nil && rep.GPT.DiskKnown {
+		fmt.Fprintf(w, "  backup GPT    LBA 0x%x, %d sectors (disk %s)\n",
+			rep.GPT.BackupEntriesLBA, GPTBackupSectors, humanBytes(int64(rep.GPT.DiskSectors)*512))
+	} else {
+		fmt.Fprintf(w, "  backup GPT    at the end of the flash (size unknown to this dry run)\n")
+	}
+	fmt.Fprintf(w, "  parameter     %s from image offset 0x%x, %d copies of %s (first-4-access %t):\n",
+		humanBytes(p.Bytes), p.FileOffset, p.Copies, humanBytes(p.CopyBytes), p.First4Access)
+	for _, r := range p.Replicas {
+		fmt.Fprintf(w, "    copy %d  LBA 0x%x  %d sectors\n", r.Index, r.LBA, r.Sectors)
+	}
 }
 
 func writePartitions(w io.Writer, rep *Report) {

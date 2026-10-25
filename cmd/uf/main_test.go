@@ -9,21 +9,26 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
+
 	"github.com/SilenWang/rk3588-webflasher/internal/rkcrc"
 	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
 )
 
-// CLI-level fixture: a bare RKAF image (no RKFW, no MD5) with three
-// partitions, all payloads small enough to keep the test instant.
+// CLI-level fixture: a bare RKAF image (no RKFW, no MD5) with two partitions,
+// all payloads small enough to keep the test instant. The parameter entry has
+// the real shape (flash offset 0, a 0x4000-sector reserved area) so the gpt
+// stage can place its copies.
 const cliParameter = `FIRMWARE_VER: 23.0.0
 TYPE: GPT
-CMDLINE: mtdparts=rk29xxnand:0x00001000@0x00000040(parameter),0x00002000@0x00001040(uboot),0x00008000@0x00003040(boot)
+CMDLINE: mtdparts=rk29xxnand:0x00002000@0x00008000(uboot),0x00008000@0x0000a000(boot)
 `
 
 type cliPart struct {
-	name string
-	data []byte
-	lba  uint32
+	name     string
+	data     []byte
+	lba      uint32
+	partSize uint32
 }
 
 func wrapParam(text string) []byte {
@@ -48,9 +53,9 @@ func buildCLIImage(t *testing.T) []byte {
 	boot := bytes.Repeat([]byte{0x22}, 2048)
 	copy(boot[0:8], "CHROMEOS") // ChromeOS kernel
 	parts := []cliPart{
-		{name: "parameter", data: wrapParam(cliParameter), lba: 0x40},
-		{name: "uboot", data: uboot, lba: 0x1040},
-		{name: "boot", data: boot, lba: 0x3040},
+		{name: "parameter", data: wrapParam(cliParameter), lba: 0, partSize: 0x4000},
+		{name: "uboot", data: uboot, lba: 0x8000, partSize: 0x2000},
+		{name: "boot", data: boot, lba: 0xa000, partSize: 0x8000},
 	}
 
 	le := binary.LittleEndian
@@ -71,7 +76,7 @@ func buildCLIImage(t *testing.T) []byte {
 		copy(slot[32:92], "Image/"+p.name)
 		size := uint32(len(p.data))
 		padded := (size + 511) / 512 * 512
-		le.PutUint32(slot[92:96], 0xFFFFFFFF)
+		le.PutUint32(slot[92:96], p.partSize)
 		le.PutUint32(slot[96:100], pos)
 		le.PutUint32(slot[100:104], p.lba)
 		le.PutUint32(slot[104:108], padded)
@@ -110,16 +115,24 @@ func TestRunDryRunJSON(t *testing.T) {
 	if rep.Container.HasRKFW {
 		t.Fatal("bare RKAF image reported HasRKFW")
 	}
-	if len(rep.Partitions) != 3 {
-		t.Fatalf("partitions = %d, want 3", len(rep.Partitions))
+	if len(rep.Partitions) != 2 {
+		t.Fatalf("partitions = %d, want 2", len(rep.Partitions))
 	}
 	if rep.GPT == nil || !rep.GPT.DiskKnown || !rep.GPT.DiskDerived {
 		t.Fatalf("GPT = %+v", rep.GPT)
 	}
-	if len(rep.Stages) != 4 { // 3 wl + rd (no loader => no ul/gpt)
+	if rep.ParameterWrite == nil {
+		t.Fatal("the report has no parameter write plan")
+	}
+	// gpt + 2 wl + rd: a bare RKAF image has no loader (no ul, no IDB) but it
+	// still carries the parameter table the gpt stage has to write.
+	if len(rep.Stages) != 4 {
 		t.Fatalf("stages = %+v", rep.Stages)
 	}
-	for _, st := range rep.Stages[:3] {
+	if rep.Stages[0].Phase != "gpt" {
+		t.Fatalf("first stage = %+v, want gpt", rep.Stages[0])
+	}
+	for _, st := range rep.Stages[1:3] {
 		if st.Phase != "wl" {
 			t.Fatalf("stage %+v, want wl", st)
 		}
@@ -133,7 +146,8 @@ func TestRunDryRunJSON(t *testing.T) {
 	if rep.Verification.MD5 == nil || rep.Verification.MD5.Present {
 		t.Fatalf("bare RKAF must report MD5 as not present: %+v", rep.Verification.MD5)
 	}
-	wantTotal := int64(512 + 1024 + 2048)
+	wantTotal := int64(1024+2048) + (gpt.PrimarySectors+gpt.BackupSectors)*512 +
+		int64(rep.ParameterWrite.Copies)*rep.ParameterWrite.CopyBytes
 	if rep.TotalBytes != wantTotal {
 		t.Fatalf("total bytes = %d, want %d", rep.TotalBytes, wantTotal)
 	}

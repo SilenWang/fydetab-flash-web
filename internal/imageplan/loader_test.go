@@ -105,9 +105,8 @@ func crc32Rockchip(b []byte) uint32 {
 }
 
 const testCmdline = `CMDLINE: mtdparts=rk29xxnand:` +
-	`0x00000004@0x00000040(parameter),` +
-	`0x0000000c@0x00000044(uboot),` +
-	`0x00a00000@0x00000050(state)`
+	`0x0000000c@0x00004000(uboot),` +
+	`0x00a00000@0x00005000(state)`
 
 // testImageBytes assembles a sparse-free RKFW image in memory: header, loader,
 // RKAF (parameter + uboot + a 1 GiB state payload) and the trailing MD5.
@@ -116,19 +115,27 @@ const testCmdline = `CMDLINE: mtdparts=rk29xxnand:` +
 func testImageBytes(t *testing.T, chipTag uint32) []byte {
 	t.Helper()
 	loader := testLoader(t, 0x33353838) // "3588"
-	param := make([]byte, 2048)
-	copy(param, testCmdline)
+	// The parameter entry carries the real shape: flash offset 0, a
+	// 0x4000-sector reserved area, and a PARM-wrapped table so its checksum
+	// verifies (the gpt stage refuses anything else).
+	paramText := []byte(testCmdline)
+	param := make([]byte, 8+len(paramText)+4)
+	copy(param, "PARM")
+	binary.LittleEndian.PutUint32(param[4:8], uint32(len(paramText)))
+	copy(param[8:], paramText)
+	binary.LittleEndian.PutUint32(param[8+len(paramText):], rkcrc.Checksum(paramText))
 	uboot := bytes.Repeat([]byte{0x11}, 6144)
 	state := bytes.Repeat([]byte{0x22}, 512*64)
 
 	items := []struct {
-		name    string
-		lba     uint32
-		payload []byte
+		name     string
+		lba      uint32
+		partSize uint32
+		payload  []byte
 	}{
-		{"parameter", 0x40, param},
-		{"uboot", 0x44, uboot},
-		{"state", 0x50, state},
+		{"parameter", 0, 0x4000, param},
+		{"uboot", 0x4000, 0xc, uboot},
+		{"state", 0x5000, 0xa00000, state},
 	}
 	rkafHeader := make([]byte, rkfw.RKAFHeaderSize)
 	copy(rkafHeader[0:4], rkfw.MagicRKAF[:])
@@ -145,7 +152,7 @@ func testImageBytes(t *testing.T, chipTag uint32) []byte {
 		copy(slot[0:32], it.name)
 		copy(slot[32:92], "Image/"+it.name)
 		padded := (len(it.payload) + 511) / 512 * 512
-		binary.LittleEndian.PutUint32(slot[92:96], rkfw.NoAddress)
+		binary.LittleEndian.PutUint32(slot[92:96], it.partSize)
 		binary.LittleEndian.PutUint32(slot[96:100], pos)
 		binary.LittleEndian.PutUint32(slot[100:104], it.lba)
 		binary.LittleEndian.PutUint32(slot[104:108], uint32((padded+2047)/2048))

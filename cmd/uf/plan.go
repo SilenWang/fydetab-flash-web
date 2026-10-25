@@ -5,6 +5,7 @@ package main
 // rkfw.OpenReaderAt). This file only keeps the names the CLI and its tests use.
 
 import (
+	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
 	"github.com/SilenWang/rk3588-webflasher/internal/imageplan"
 	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
 	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
@@ -16,14 +17,21 @@ const (
 	maxParameterBytes = imageplan.MaxParameterBytes
 	// idbSector is where Rockchip's loader expects the IDB copy on flash.
 	idbSector = imageplan.IDBSector
+	// Partition-table geometry: the primary region covers LBA 0..33, the
+	// backup region the last 33 sectors of the flash.
+	GPTPrimarySectors = gpt.PrimarySectors
+	GPTBackupSectors  = gpt.BackupSectors
+	GPTPrimaryBytes   = imageplan.GPTPrimaryBytes
+	GPTBackupBytes    = imageplan.GPTBackupBytes
 )
 
 // Item actions in the plan.
 const (
-	actionWrite    = imageplan.ActionWrite
-	actionReserved = imageplan.ActionReserved
-	actionNoTarget = imageplan.ActionNoTarget
-	actionEmpty    = imageplan.ActionEmpty
+	actionWrite     = imageplan.ActionWrite
+	actionReserved  = imageplan.ActionReserved
+	actionNoTarget  = imageplan.ActionNoTarget
+	actionEmpty     = imageplan.ActionEmpty
+	actionParameter = imageplan.ActionParameter
 )
 
 type (

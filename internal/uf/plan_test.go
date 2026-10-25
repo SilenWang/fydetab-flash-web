@@ -21,7 +21,7 @@ func TestPlanValidateRejectsBrokenPlans(t *testing.T) {
 		want   string
 	}{
 		{"nil", nil, "nil plan"},
-		{"nothing to write", func(p *Plan) { p.Items, p.IDB = nil, IDBPlan{} }, "nothing to write"},
+		{"nothing to write", func(p *Plan) { p.Items, p.IDB, p.GPT = nil, IDBPlan{}, nil }, "nothing to write"},
 		{"duplicate item", func(p *Plan) { p.Items[1].Name = p.Items[0].Name }, "appears twice"},
 		{"padded size too small", func(p *Plan) { p.Items[0].PaddedSize = p.Items[0].Size - 1 }, "padded size"},
 		{"unaligned padded size", func(p *Plan) { p.Items[0].PaddedSize = 5000 }, "not a multiple"},
@@ -68,9 +68,9 @@ func TestChipMatches(t *testing.T) {
 		want          bool
 	}{
 		{"RK3588", "3588", true},
-		{"RK3588", "8853", true},   // device chip tag prints byte-reversed
-		{"RK3588S", "8853", true},  // same tag, S variant suffix ignored
-		{"RK3566", "8853", false},  // 3566 tag is 6653, not 8853
+		{"RK3588", "8853", true},  // device chip tag prints byte-reversed
+		{"RK3588S", "8853", true}, // same tag, S variant suffix ignored
+		{"RK3566", "8853", false}, // 3566 tag is 6653, not 8853
 		{"rk3588s", "3588", true},
 		{"3588", "3588", true},
 		{"RK3588", "3566", false},

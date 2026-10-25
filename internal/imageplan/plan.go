@@ -67,10 +67,22 @@ const (
 
 // Item actions in the plan.
 const (
-	ActionWrite    = "write"
-	ActionReserved = "reserved"
-	ActionNoTarget = "no-target"
-	ActionEmpty    = "zero-size"
+	ActionWrite = "write"
+	// ActionParameter marks the parameter entry: its bytes are written by the
+	// gpt stage (replicated across its reserved area), never as a partition
+	// payload at an item target.
+	ActionParameter = "parameter"
+	ActionReserved  = "reserved"
+	ActionNoTarget  = "no-target"
+	ActionEmpty     = "zero-size"
+)
+
+// GPTPrimaryBytes and GPTBackupBytes are the two transfers the gpt stage makes
+// for the partition table itself. They do not depend on the partition table:
+// the layout is 128 fixed-size entries either way.
+const (
+	GPTPrimaryBytes = int64(gpt.PrimarySectors * parameter.SectorSize)
+	GPTBackupBytes  = int64(gpt.BackupSectors * parameter.SectorSize)
 )
 
 // Options are the knobs of the dry-run plan.
@@ -83,6 +95,10 @@ type Options struct {
 	// RewriteIDB mirrors uf's --rewrite-idb: the IDB stage then rebuilds the
 	// block instead of keeping the one already on the device.
 	RewriteIDB bool
+	// NoFirst4Access places the parameter copies at the parameter entry's own
+	// flash offset instead of the first-4-access offset. The reference device
+	// advertises the capability, so the default is to use it.
+	NoFirst4Access bool
 }
 
 // VerificationInfo carries the checksum results for the report.
@@ -123,13 +139,13 @@ type ContainerInfo struct {
 	// DataHole is the number of bytes packed into the RKAF archive that its
 	// 32-bit item table cannot describe (the STATE slot's reserved space).
 	// DataHoleStart is the logical archive offset where it begins.
-	DataHole      int64  `json:"dataHole,omitempty"`
-	DataHoleStart int64  `json:"dataHoleStart,omitempty"`
-	Model         string `json:"model,omitempty"`
-	ID              string `json:"id,omitempty"`
-	Manufacturer    string `json:"manufacturer,omitempty"`
-	ArchiveVersion  uint32 `json:"archiveVersion"`
-	ItemCount       int    `json:"itemCount"`
+	DataHole       int64  `json:"dataHole,omitempty"`
+	DataHoleStart  int64  `json:"dataHoleStart,omitempty"`
+	Model          string `json:"model,omitempty"`
+	ID             string `json:"id,omitempty"`
+	Manufacturer   string `json:"manufacturer,omitempty"`
+	ArchiveVersion uint32 `json:"archiveVersion"`
+	ItemCount      int    `json:"itemCount"`
 }
 
 // ParameterInfo summarises the parameter partition.
@@ -208,6 +224,33 @@ type UncoveredRange struct {
 	CoveredBytes   int64  `json:"coveredBytes"`
 }
 
+// ParameterPlan is the parameter-partition write the gpt stage performs: the
+// PARM block the image carries, replicated across the entry's reserved area so
+// the device always finds an intact partition table.
+type ParameterPlan struct {
+	// Item is the archive entry the bytes come from ("parameter").
+	Item string `json:"item"`
+	// FileOffset/Bytes locate the PARM block in the image; CopyBytes is the
+	// sector-aligned length written per copy (the block plus its slot padding).
+	FileOffset int64 `json:"fileOffset"`
+	Bytes      int64 `json:"bytes"`
+	CopyBytes  int64 `json:"copyBytes"`
+	// Copies and the layout of the reserved area.
+	Copies       int                 `json:"copies"`
+	First4Access bool                `json:"first4Access"`
+	Replicas     []parameter.Replica `json:"replicas"`
+	// CRCOK records whether the block's own PARM checksum verified.
+	CRCOK bool `json:"crcOk"`
+}
+
+// TotalBytes is the transfer size of all copies.
+func (p *ParameterPlan) TotalBytes() int64 {
+	if p == nil {
+		return 0
+	}
+	return parameter.ReplicaBytes(p.Replicas)
+}
+
 // DataCheck is the per-item payload audit: where each item's bytes really are
 // (dataOffset), and what the first bytes at that offset look like. It exists so
 // a wrong offset is visible in the plan instead of only on flash: SIL-515 wrote
@@ -249,18 +292,24 @@ type Report struct {
 	// Loader is the Download Boot blob's identity (image's own or a file the
 	// user picked). Filled by the caller after BuildReport, because picking
 	// the loader is a user choice, not a property of the image.
-	Loader     *EmbeddedLoader  `json:"loader,omitempty"`
-	GPT        *gpt.Layout      `json:"gpt"`
-	Stages     []Stage          `json:"stages"`
-	Items      []ItemPlan       `json:"items"`
-	Partitions []PartitionPlan  `json:"partitions"`
-	Uncovered  []UncoveredRange `json:"uncovered,omitempty"`
+	Loader *EmbeddedLoader `json:"loader,omitempty"`
+	GPT    *gpt.Layout     `json:"gpt"`
+	// ParameterWrite is the parameter-partition write the gpt stage performs,
+	// when the image carries a parameter entry.
+	ParameterWrite *ParameterPlan   `json:"parameterWrite,omitempty"`
+	Stages         []Stage          `json:"stages"`
+	Items          []ItemPlan       `json:"items"`
+	Partitions     []PartitionPlan  `json:"partitions"`
+	Uncovered      []UncoveredRange `json:"uncovered,omitempty"`
 	// Erase is the explicit --erase-tail decision, filled by applyEraseDecision.
-	Erase      *EraseDecision `json:"erase,omitempty"`
-	NoReset    bool           `json:"noReset,omitempty"`
+	Erase   *EraseDecision `json:"erase,omitempty"`
+	NoReset bool           `json:"noReset,omitempty"`
 	// IDBRewrite is the explicit --rewrite-idb decision; false means the run
 	// reads LBA 64 first and keeps an existing valid IDB.
-	IDBRewrite bool     `json:"idbRewrite,omitempty"`
+	IDBRewrite bool `json:"idbRewrite,omitempty"`
+	// IDBBytes is the IDB model's size for this image's loader (0 when the
+	// image carries none). It is part of the gpt stage, not the whole stage.
+	IDBBytes   int64    `json:"idbBytes,omitempty"`
 	TotalBytes int64    `json:"totalBytes"`
 	Warnings   []string `json:"warnings,omitempty"`
 	Notes      []string `json:"notes,omitempty"`
@@ -388,6 +437,15 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 		}
 
 		switch {
+		case img.Parameter != nil && &img.Items[i] == img.Parameter:
+			// The parameter block is not a partition payload: the gpt stage
+			// writes it (replicated) together with the partition table. It has
+			// no target LBA of its own, so it never becomes a wl item.
+			ip.Action = ActionParameter
+			ip.Detail = "the parameter block is written by the gpt stage (replicated), not as a partition payload"
+			ip.TargetKnown = false
+			itemPlans[i] = ip
+			continue
 		case it.Reserved():
 			ip.Action = ActionReserved
 			ip.Detail = "no payload in the archive; the device generates this partition during flashing"
@@ -583,14 +641,54 @@ func BuildReport(img *rkfw.Image, doc *parameter.Document, ver VerificationInfo,
 	} else if err != nil {
 		rep.Warnings = append(rep.Warnings, fmt.Sprintf("could not build the New IDB from the image loader (%v); planning the legacy %s size", err, ModelNameFallback))
 	}
-	if idb > 0 {
-		detail := fmt.Sprintf("read LBA %d first and identify the device's IDB (RKNS/RK28/empty); write only when it is absent or --rewrite-idb is given (%s)",
-			IDBSector, idbDetail)
-		if opts.RewriteIDB {
-			detail = fmt.Sprintf("--rewrite-idb: read LBA %d, back the original IDB up, rebuild in the identified format (%s)",
-				IDBSector, idbDetail)
+	rep.IDBBytes = idb
+	// The gpt stage is the partition-table stage: the IDB (when it has to be
+	// rewritten), the GUID partition table itself and the parameter block the
+	// device reads. None of it is optional on a device whose table can no
+	// longer be trusted, so the byte count covers all three parts.
+	parm, err := buildParameterPlan(img, doc, opts)
+	if err != nil {
+		return nil, err
+	}
+	rep.ParameterWrite = parm
+	if parm == nil {
+		rep.Warnings = append(rep.Warnings, "the image carries no parameter entry: the gpt stage can only write the IDB, not the partition table")
+	}
+	if parm != nil {
+		if doc != nil && doc.CRCAvailable && !parm.CRCOK {
+			rep.Warnings = append(rep.Warnings, "the parameter block's own checksum does not verify; the gpt stage will refuse to write it")
 		}
-		rep.appendStage("gpt", "Prepare/Download IDB", detail, idb)
+		rep.Notes = append(rep.Notes, fmt.Sprintf(
+			"- gpt stage also writes the partition table: primary GPT %s at LBA 0, backup GPT %s at LBA N-33 (N = flash sectors; 233 GiB on the reference device), and %d parameter copies of %s at LBA 0x%x, step 0x%x.",
+			HumanBytes(GPTPrimaryBytes), HumanBytes(GPTBackupBytes), parm.Copies, HumanBytes(parm.CopyBytes),
+			parm.Replicas[0].LBA, parm.Replicas[1].LBA-parm.Replicas[0].LBA))
+		if !rep.GPT.DiskKnown {
+			rep.Notes = append(rep.Notes, "- the backup GPT location is derived here; a real write uses the flash size the device reports.")
+		}
+	}
+	gptBytes := int64(0)
+	if parm != nil {
+		gptBytes = GPTPrimaryBytes + GPTBackupBytes + parm.TotalBytes()
+	}
+	if idb > 0 || parm != nil {
+		var parts []string
+		if idb > 0 {
+			parts = append(parts, idbDetail)
+		}
+		if parm != nil {
+			parts = append(parts, fmt.Sprintf("write GPT %s (primary 34 + backup 33 sectors) at LBA 0 and 0x%x, then the parameter block %d x %s",
+				HumanBytes(GPTPrimaryBytes+GPTBackupBytes), rep.GPT.BackupEntriesLBA, parm.Copies, HumanBytes(parm.CopyBytes)))
+		}
+		detail := strings.Join(parts, "; ")
+		if idb > 0 {
+			prefix := fmt.Sprintf("read LBA %d first and identify the device's IDB (RKNS/RK28/empty); write only when it is absent or --rewrite-idb is given",
+				IDBSector)
+			if opts.RewriteIDB {
+				prefix = fmt.Sprintf("--rewrite-idb: read LBA %d, back the original IDB up, rebuild in the identified format", IDBSector)
+			}
+			detail = prefix + "; " + detail
+		}
+		rep.appendStage("gpt", "Prepare/Download IDB, GPT and parameter", detail, idb+gptBytes)
 	}
 
 	writeable := make([]int, 0, len(img.Items))

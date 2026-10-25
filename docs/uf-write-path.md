@@ -58,7 +58,7 @@ connect ─┬─ MASKROM ──> Download Boot(ul) ──> 等待重新枚举�
                                               ▼
                          Test Device (td) → Check Chip → Get FlashInfo
                                               ▼
-                         Prepare IDB → Download IDB (gpt, LBA 64)
+                  gpt：IDB（必要时）→ 主/备 GPT → parameter 副本 → 全部读回校验
                                               ▼
                          wl <item> × N（按目标 LBA 顺序，1–4 MiB 分块）
                                               ▼
@@ -84,11 +84,15 @@ connect ─┬─ MASKROM ──> Download Boot(ul) ──> 等待重新枚举�
   这是有意的：中途失败的 item 在 flash 上可能是半截内容，按 item 粒度重写比尝试续到扇区更安全。
 - `rd` 之后设备会重新枚举，浏览器授权同样可能失效；这是成功路径的已知行为，不是失败。
 
-## 5. IDB 字节模型（先读后判，默认不覆盖）
+## 5. gpt 阶段：IDB、分区表与 parameter
 
-`gpt` 阶段 = **读取设备 LBA 64 → 识别类型 → 必要时重建**。Fydetab Duo 的 LBA 64 是
-`RKNS` 头（New IDB）；旧工具用未验证的 `rk28-rc4` 覆盖它，BootROM 因此读不出 uboot。
-现在的顺序是：
+`gpt` 阶段写三样东西，顺序固定：**IDB（必要时）→ 主/备 GPT → parameter 副本**，全部在第一条
+payload 之前完成。设备分区表不可信时，只写其中一部分没有意义。
+
+### 5.1 IDB 字节模型（先读后判，默认不覆盖）
+
+Fydetab Duo 的 LBA 64 是 `RKNS` 头（New IDB）；旧工具用未验证的 `rk28-rc4` 覆盖它，BootROM
+因此读不出 uboot。现在的顺序是：
 
 1. `READ_LBA` 读 LBA 64 的前 8 个扇区，识别 `RKNS` / `RK28` / 空 / 未知（`uf.IdentifyIDB`）；
 2. **设备已有有效 IDB（RKNS 或 RK28）→ 默认不写**，只改 GPT 与数据分区；
@@ -114,6 +118,46 @@ v23 loader 的三段是 2048 + 73728 + 178176 = **253,952 B**，生成的 IDB �
 但还没有一次“用新模型刷完并启动”的真机确认。日志固定记录 `idb.existing`
 （`RKNS`/`RK28`/`empty`/`unknown`）、`idb.overwritten`、`idb.existingHeadHex`、
 `idb.backupPath` 与 `idb.model`/`idb.verified`。
+
+### 5.2 分区表（GUID Partition Table）
+
+镜像本身不带分区表字节：分区表是主机按 parameter 生成、写进设备的。几何是 UEFI 的标准布局：
+
+| 位置 | 内容 |
+|---|---|
+| LBA 0 | 保护性 MBR：单个 `0xEE` 分区覆盖整盘 + `0x55AA` |
+| LBA 1 | 主 GPT 头（`EFI PART`，92 字节头，头 CRC32） |
+| LBA 2..33 | 主条目数组，128 × 128 B，条目数组 CRC32 |
+| LBA N-33..N-2 | 备份条目数组（与主表逐字节相同） |
+| LBA N-1 | 备份头（`my_lba=N-1`、`alternate_lba=1`、条目数组在 N-33） |
+
+- 一次写主表 **34 个扇区**、一次写备份表 **33 个扇区**。
+- `N` 取设备 `Get FlashInfo` 报告的扇区数，**不用镜像大小推**；设备没报容量时直接中止，因为
+  备份表的位置就取决于它。计划里的容量（`--flash-sectors` 或派生值）与设备不一致时按设备重建，
+  并在日志里 warn。
+- 每个分区项取 parameter 的 `offset`/`size`：`starting_lba`/`ending_lba` 就是它，`bootable`
+  标志映射到条目属性的 legacy-BIOS-bootable 位；分区名按 UTF-16LE 写入。GUID 由分区表内容
+  确定性派生，所以同一张表重写得到逐字节相同的结果（读回校验与续跑都依赖这一点）。
+- 参考设备的 12 行（起始 LBA + 大小）是验收对照；`internal/gpt/encode_test.go` 用真实
+  parameter 片段逐项断言。
+
+### 5.3 parameter 副本
+
+parameter 块不是 mtdparts 里的分区，而是主机写进磁盘开头的保留区，设备用它建立分区表：
+
+- 内容是镜像里 `parameter` 项的**原样字节**（PARM 头 + 长度 + 文本 + PARM CRC）；
+- 写 **8 份**：起始 LBA = 该项的 flash offset + `0x2000`（设备具备 first-4-access 能力时；
+  否则用 flash offset 本身），间隔 = 该项保留区扇区数 `>> 3`，每份长度 = 该块的槽位大小
+  （扇区对齐）；
+- 参考设备的值：起始 LBA `0x2000`、间隔 `0x800`、8 份 × 4 扇区。后几份会落在同一次运行
+  还要重写的 uboot 分区里，这是无害的——parameter 在 payload 之前写。
+
+写前检查与 mock/replay 的“跳过签名校验”开关无关（那个开关只针对设备侧的 payload 门禁）：PARM 包装
+存在、CRC 通过、块里的 mtdparts 与即将写入的 GPT 逐项一致。写后逐份读回比对。
+
+某份副本如果落在本次**不会重写**的数据上（`--resume-from` 跳过的 item、备份表、IDB），
+该副本跳过并记 warning；一份都写不了则中止。这条规则保证“为了写分区表而破坏用户数据”
+不会发生。
 
 ## 6. 写入前的擦除语义（未确认，因此显式）
 

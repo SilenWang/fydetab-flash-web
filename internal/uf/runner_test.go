@@ -66,7 +66,7 @@ func TestRunSuccessWritesIDBAndItemsThenResets(t *testing.T) {
 	if !rep.Reset {
 		t.Fatal("report does not record the reset")
 	}
-	wantWritten := plan.IDB.Bytes + layout.bootBytes + layout.stateBytes
+	wantWritten := plan.GPTStageBytes() + layout.bootBytes + layout.stateBytes
 	if rep.BytesWritten != wantWritten {
 		t.Fatalf("bytes written = %d, want %d", rep.BytesWritten, wantWritten)
 	}
@@ -208,7 +208,7 @@ func TestRunResumeFromSkipsEarlierItems(t *testing.T) {
 			t.Fatalf("boot item was written during a --resume-from state run: %+v", w)
 		}
 	}
-	if rep.BytesWritten != plan.IDB.Bytes+layout.stateBytes {
+	if rep.BytesWritten != plan.GPTStageBytes()+layout.stateBytes {
 		t.Fatalf("bytes written = %d, want IDB + state only", rep.BytesWritten)
 	}
 	if !conn.Last().ResetSent() {

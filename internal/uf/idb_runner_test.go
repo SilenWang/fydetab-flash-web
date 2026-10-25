@@ -56,12 +56,12 @@ func TestRunKeepsExistingNewIDB(t *testing.T) {
 		t.Fatal("the device's RKNS IDB was modified; it must be kept by default")
 	}
 	for _, ph := range rep.Phases {
-		if ph.Phase == PhaseIDB && ph.Status != "skipped" {
-			t.Fatalf("gpt phase status = %s, want skipped", ph.Status)
+		if ph.Phase == PhaseIDB && ph.Status != "ok" {
+			t.Fatalf("gpt phase status = %s, want ok", ph.Status)
 		}
 	}
 	// The skipped IDB must not be counted as transferred bytes.
-	if want := layout.bootBytes + layout.stateBytes; rep.BytesWritten != want {
+	if want := plan.GPTStageBytes() - plan.IDB.Bytes + layout.bootBytes + layout.stateBytes; rep.BytesWritten != want {
 		t.Fatalf("bytes written = %d, want %d (IDB skipped)", rep.BytesWritten, want)
 	}
 	if rep.TotalBytes != rep.BytesWritten {

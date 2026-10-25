@@ -114,7 +114,7 @@ pixi run icons  # 重新生成 PWA 图标
    未覆盖尾部必须在下拉框里显式选择 `none / fill / erase-lba` 并打勾。
 5. 看 **真机前自检** 四项是否全绿（maskrom、loader 与镜像 chip 匹配、计划与 parameter 一致且尾部已选择、
    第一条命令是 `db`）。全绿后 **开始写入** 才可点。
-6. 点 **开始写入**：状态机自己执行 `db → gpt(IDB) → wl … → rd`。成功后设备复位并重新枚举；再点一次
+6. 点 **开始写入**：状态机自己执行 `db → gpt(IDB + 分区表 + parameter) → wl … → rd`。成功后设备复位并重新枚举；再点一次
    **授权设备**，`ld` 应为 `Mode=Loader`。
 
 > loader 由镜像提供，仓库不分发 Rockchip loader blob，也不联网获取。手动指定 loader 的文件只在本机内存里使用。
@@ -291,7 +291,7 @@ pixi run uf --mock --log uf.ndjson update.img
 
 - 写入命令：`WRITE_LBA(0x15)`、`ERASE_LBA(0x25)`、`DEVICE_RESET(0xFF)`；一次写 64 KiB，
   进度/重试块 1–4 MiB（`--chunk-size`），只有超时会重试。
-- 状态机：`ul → td → chip → flash → gpt(IDB) → wl <item> → erase → rd`；
+- 状态机：`ul → td → chip → flash → gpt(IDB + GPT + parameter) → wl <item> → erase → rd`；
   失败时报告 `nextItem` 与 `--resume-from <item>`。
 - `--erase-tail=none|fill|erase-lba` 显式回答“镜像没覆盖的分区尾部要不要擦”，
   dry-run 与运行日志都会打印这个选择。

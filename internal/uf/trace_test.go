@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
 	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
 )
 
@@ -67,6 +68,16 @@ func loaderSessionFrames(t *testing.T, plan *Plan, failLBA *uint32) []Frame {
 		addRead(rockusb.Op(OpReadLBA), IDBProbeSectors*SectorSize, make([]byte, IDBProbeSectors*SectorSize))
 		addWrite(plan.IDB.LBASector, int(plan.IDB.Bytes))
 	}
+	// The partition-table half of the same stage: primary GPT, backup GPT, then
+	// the parameter copies, each in one WRITE_LBA (they are all under the
+	// 64 KiB transfer limit).
+	if plan.GPT != nil {
+		addWrite(0, gpt.PrimarySectors*SectorSize)
+		addWrite(uint32(plan.DiskSectors-uint64(gpt.BackupSectors)), gpt.BackupSectors*SectorSize)
+		for _, r := range plan.GPT.Parameter.Replicas() {
+			addWrite(uint32(r.LBA), int(r.Sectors)*SectorSize)
+		}
+	}
 	for _, it := range plan.Items {
 		addWrite(it.TargetLBA, int(it.PaddedSize))
 	}
@@ -113,7 +124,7 @@ func TestReplayFullLoaderSession(t *testing.T) {
 	if err := tr.Err(); err != nil {
 		t.Fatalf("replay mismatch: %v", err)
 	}
-	if rep.BytesWritten != plan.IDB.Bytes+layout.bootBytes+layout.stateBytes {
+	if rep.BytesWritten != plan.GPTStageBytes()+layout.bootBytes+layout.stateBytes {
 		t.Fatalf("bytes written = %d", rep.BytesWritten)
 	}
 }

@@ -8,6 +8,7 @@ package main
 import (
 	"testing"
 
+	gptpkg "github.com/SilenWang/rk3588-webflasher/internal/gpt"
 	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
 	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
 	"github.com/SilenWang/rk3588-webflasher/internal/testimage"
@@ -150,8 +151,9 @@ func TestR132DryRunStages(t *testing.T) {
 	if ul == nil || ul.Bytes != 412096 {
 		t.Errorf("ul stage = %+v, want 412096 loader bytes", ul)
 	}
-	if gpt == nil || gpt.Bytes != 412160 {
-		t.Errorf("gpt stage = %+v, want the 412160-byte loader padded to 512", gpt)
+	wantGPT := int64(412160) + int64(gptpkg.PrimarySectors+gptpkg.BackupSectors)*512 + parameter.ReplicaCount*2048
+	if gpt == nil || gpt.Bytes != wantGPT {
+		t.Errorf("gpt stage = %+v, want %d bytes (legacy IDB + GPT + parameter copies)", gpt, wantGPT)
 	}
 	// package-file, bootloader and parameter have no mappable partition, so
 	// seven payload items are written.

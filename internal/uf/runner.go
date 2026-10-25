@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
 	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
 )
 
@@ -58,8 +60,12 @@ type Report struct {
 	Phases     []PhaseReport `json:"phases"`
 	Items      []ItemReport  `json:"items"`
 	IDB        *IDBReport    `json:"idb,omitempty"`
-	Erase      *EraseReport  `json:"erase,omitempty"`
-	Device     DeviceReport  `json:"device"`
+	// GPT is the partition table this run wrote, Parameter the parameter block
+	// replicated for the device to read. Both belong to the gpt stage.
+	GPT       *GPTReport       `json:"gpt,omitempty"`
+	Parameter *ParameterReport `json:"parameter,omitempty"`
+	Erase     *EraseReport     `json:"erase,omitempty"`
+	Device    DeviceReport     `json:"device"`
 	// Loader is the Download Boot blob's identity (source, sha256, build
 	// date, chip check), recorded whether or not the device needed it.
 	Loader *LoaderReport `json:"loader,omitempty"`
@@ -360,7 +366,7 @@ func (r *runner) run(ctx context.Context) error {
 	if err := r.readFlashInfo(ctx); err != nil {
 		return err
 	}
-	if err := r.downloadIDB(ctx); err != nil {
+	if err := r.gptStage(ctx); err != nil {
 		return err
 	}
 	if err := r.writeItems(ctx); err != nil {
@@ -386,6 +392,8 @@ func (r *runner) connect(ctx context.Context) error {
 		total += r.plan.Loader.Length
 	}
 	total += r.plan.IDB.Bytes
+	total += r.plan.GPTBytes()
+	total += r.plan.ParameterBytes()
 	for _, it := range r.plan.Items {
 		if r.skipped[it.Name] {
 			continue
@@ -726,31 +734,102 @@ func (r *runner) readFlashInfo(ctx context.Context) error {
 		r.rep.Warnings = append(r.rep.Warnings, warning)
 		r.event(PhaseFlash, "warn", "", warning)
 	}
+	// The partition table itself owns the first and the last sectors of the
+	// disk. A payload item there would overwrite the table this run writes, so
+	// refuse before the first byte goes out.
+	if r.plan.GPT != nil {
+		if sectors < gpt.PrimarySectors+gpt.BackupSectors {
+			return r.fail(PhaseFlash, "", rockusb.ErrDeviceNotSupport,
+				fmt.Sprintf("设备容量 %d 扇区放不下主/备分区表", sectors),
+				"确认 Get FlashInfo 的返回值；不要在这种设备上写分区表。", nil)
+		}
+		primaryEnd := uint64(gpt.PrimarySectors)
+		backupStart := sectors - gpt.BackupSectors
+		for _, it := range r.plan.Items {
+			if r.skipped[it.Name] {
+				continue
+			}
+			start := uint64(it.TargetLBA)
+			end := start + uint64(it.PaddedSize/SectorSize)
+			if start < primaryEnd {
+				return r.fail(PhaseFlash, it.Name, rockusb.ErrDeviceNotSupport,
+					fmt.Sprintf("item %q 从 LBA 0x%x 开始，覆盖主分区表", it.Name, start),
+					"分区表与数据互相覆盖：检查 parameter 与镜像的分区起点。", nil)
+			}
+			if end > backupStart {
+				return r.fail(PhaseFlash, it.Name, rockusb.ErrDeviceNotSupport,
+					fmt.Sprintf("item %q 写到 LBA 0x%x，覆盖备份分区表（LBA 0x%x 起）", it.Name, end, backupStart),
+					"分区表与数据互相覆盖：检查 parameter 的分区大小与设备容量。", nil)
+			}
+		}
+	}
 	r.endPhase("ok", fmt.Sprintf("flash %d 扇区（%d MiB），目标 LBA 在范围内", sectors, info.FlashSizeBytes>>20))
 	return nil
 }
 
 // --- gpt / wl / erase / rd --------------------------------------------------
 
-func (r *runner) downloadIDB(ctx context.Context) error {
-	if r.plan.IDB.Bytes == 0 {
-		r.rep.Phases = append(r.rep.Phases, PhaseReport{Phase: PhaseIDB, Name: "Prepare/Download IDB", Status: "skipped",
-			Note: "镜像没有 loader，gpt 阶段不适用"})
-		r.notes = append(r.notes, "镜像没有 RKFW loader：跳过 IDB（gpt）阶段。")
+// gptStage writes everything the partition table needs before the first payload
+// sector: the parameter block (replicated), the GUID partition table built from
+// it, and — only when the device does not already hold a usable one — the IDB.
+//
+// All three live in one phase because they are one decision: a device whose
+// table cannot be trusted cannot be described by any of them alone.
+func (r *runner) gptStage(ctx context.Context) error {
+	if r.plan.IDB.Bytes == 0 && r.plan.GPT == nil {
+		r.rep.Phases = append(r.rep.Phases, PhaseReport{Phase: PhaseIDB, Name: "Prepare/Download IDB, GPT and parameter", Status: "skipped",
+			Note: "镜像没有 loader 也没有 parameter：gpt 阶段不适用"})
+		r.notes = append(r.notes, "镜像既没有 RKFW loader 也没有 parameter 项：跳过 gpt 阶段。")
 		return nil
 	}
+
+	r.beginPhase(PhaseIDB, "Prepare/Download IDB, GPT and parameter")
+	idbBytes, err := r.writeIDB(ctx)
+	if err != nil {
+		return err
+	}
+	gptBytes, err := r.writeGPT(ctx)
+	if err != nil {
+		return err
+	}
+	parmBytes, err := r.writeParameter(ctx)
+	if err != nil {
+		return err
+	}
+
+	var done []string
+	if idbBytes > 0 {
+		done = append(done, fmt.Sprintf("IDB %d B", idbBytes))
+	} else if r.plan.IDB.Bytes > 0 {
+		done = append(done, "IDB 保留（未覆盖）")
+	}
+	if gptBytes > 0 {
+		done = append(done, fmt.Sprintf("GPT %d B", gptBytes))
+	}
+	if parmBytes > 0 {
+		done = append(done, fmt.Sprintf("parameter %d B", parmBytes))
+	}
+	r.endPhase("ok", strings.Join(done, "，")+"，读回校验通过")
+	return nil
+}
+
+// writeIDB is the read-identify-rewrite decision for the block at LBA 64. It
+// returns the bytes written (0 when the device's own block is kept).
+func (r *runner) writeIDB(ctx context.Context) (int64, error) {
+	if r.plan.IDB.Bytes == 0 {
+		return 0, nil
+	}
 	if r.plan.Loader == nil {
-		return r.fail(PhaseIDB, "", rockusb.ErrFailed, "计划有 IDB 阶段但缺少 loader 位置", "", nil)
+		return 0, r.fail(PhaseIDB, "", rockusb.ErrFailed, "计划有 IDB 阶段但缺少 loader 位置", "", nil)
 	}
 	if r.loader == nil {
 		loader, err := r.readAt(r.plan.Loader.FileOffset, r.plan.Loader.Length)
 		if err != nil {
-			return r.fail(PhaseIDB, "", rockusb.ErrFailed, fmt.Sprintf("读取 loader 失败: %v", err), "确认镜像文件完整可读。", err)
+			return 0, r.fail(PhaseIDB, "", rockusb.ErrFailed, fmt.Sprintf("读取 loader 失败: %v", err), "确认镜像文件完整可读。", err)
 		}
 		r.loader = loader
 	}
 
-	r.beginPhase(PhaseIDB, "Prepare/Download IDB")
 	lba := r.plan.IDB.LBASector
 	if lba == 0 {
 		lba = IDBDefaultLBA
@@ -783,21 +862,21 @@ func (r *runner) downloadIDB(ctx context.Context) error {
 	switch {
 	case info.Verified && !r.opts.RewriteIDB:
 		// Default: keep what the device already has.
-		r.rep.Phases = append(r.rep.Phases, PhaseReport{Phase: PhaseIDB, Name: "Prepare/Download IDB", Status: "skipped",
-			Note: fmt.Sprintf("设备已有有效 IDB（%s），未覆盖；需要重建时加 --rewrite-idb", info.Type)})
 		r.notes = append(r.notes, fmt.Sprintf(
-			"设备 LBA %d 已有有效 IDB（%s）：按默认策略不重写，只改 GPT 与数据分区。", lba, info.Type))
+			"设备 LBA %d 已有有效 IDB（%s）：按默认策略不重写，GPT 与 parameter 照常写入。", lba, info.Type))
+		r.event(PhaseIDB, "info", "", fmt.Sprintf(
+			"设备已有有效 IDB（%s）：保留，不覆盖；需要重建时加 --rewrite-idb", info.Type))
 		r.dropIDBBytes()
-		return nil
+		return 0, nil
 	case info.Type == IDBTypeUnknown && !r.opts.RewriteIDB:
 		hint := "先确认 LBA 64 上的内容；确需重建时加 --rewrite-idb（会先备份原字节）。"
-		return r.fail(PhaseIDB, "", rockusb.ErrDeviceNotSupport,
+		return 0, r.fail(PhaseIDB, "", rockusb.ErrDeviceNotSupport,
 			fmt.Sprintf("LBA %d 有非 IDB 字节（magic %s），既不是 RKNS 也不是 RK28", lba, info.Magic), hint, nil)
 	case info.Verified && r.opts.RewriteIDB:
 		// Rebuild in the format the device uses, not in the model's default.
 		m, err := ModelForType(info.Type)
 		if err != nil {
-			return r.fail(PhaseIDB, "", rockusb.ErrDeviceNotSupport,
+			return 0, r.fail(PhaseIDB, "", rockusb.ErrDeviceNotSupport,
 				fmt.Sprintf("设备 IDB 是 %s，无法用本工具重建", info.Type),
 				"这台设备是 New IDB（RKNS）；本版本没有经过验证的 RKNS 写入实现，不要用 rk28-rc4 覆盖它。保留设备现有 IDB 即可。", err)
 		}
@@ -831,7 +910,7 @@ func (r *runner) downloadIDB(ctx context.Context) error {
 	}
 	idb, err := model.Build(in)
 	if err != nil {
-		return r.fail(PhaseIDB, "", rockusb.ErrFailed, fmt.Sprintf("准备 IDB 失败: %v", err), "", err)
+		return 0, r.fail(PhaseIDB, "", rockusb.ErrFailed, fmt.Sprintf("准备 IDB 失败: %v", err), "", err)
 	}
 	r.event(PhaseIDB, "info", "", fmt.Sprintf("Prepare IDB: model=%s verified=%t, %d B -> LBA %d（字节模型待真机核对）",
 		model.Name(), model.Verified(), len(idb), lba))
@@ -848,19 +927,20 @@ func (r *runner) downloadIDB(ctx context.Context) error {
 
 	if !r.opts.SkipSignatureCheck {
 		if err := checkIDBMagic(idb); err != nil {
-			return r.fail(PhaseIDB, "", ErrSignature, err.Error(),
+			return 0, r.fail(PhaseIDB, "", ErrSignature, err.Error(),
 				"IDB 不是 New IDB（RKNS）；确认 ENTRYLOADER/RC4 模型，拒绝写入。", nil)
 		}
 	}
 	itemDone := int64(0)
 	if err := r.writeBuffer(ctx, PhaseIDB, "", lba, idb, &itemDone, int64(len(idb))); err != nil {
-		return err
+		return 0, err
 	}
 	if err := r.verifyReadback(lba, idb, 0, "IDB"); err != nil {
-		return err
+		return 0, err
 	}
-	r.endPhase("ok", fmt.Sprintf("%d 字节写入 LBA %d（%s，原 IDB %s 已备份），读回一致", len(idb), lba, model.Name(), info.Type))
-	return nil
+	r.event(PhaseIDB, "info", "", fmt.Sprintf(
+		"%d 字节 IDB 写入 LBA %d（%s，原 IDB %s 已备份），读回一致", len(idb), lba, model.Name(), info.Type))
+	return int64(len(idb)), nil
 }
 
 // dropIDBBytes keeps the run accounting honest when the IDB stage is skipped:

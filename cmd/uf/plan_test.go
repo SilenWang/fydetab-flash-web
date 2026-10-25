@@ -5,15 +5,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
 	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
 	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
 )
 
 // syntheticCmdline is invented for the test; it is not the Fydetab Duo
-// parameter table. The shape mirrors what uf has to handle: 7 partitions with
+// parameter table. The shape mirrors what uf has to handle: 6 partitions with
 // payload and 5 that only get a GPT entry, including a 5 GiB STATE partition.
+// The parameter block itself is not one of the mtdparts entries — the gpt stage
+// writes it into its own reserved area.
 const syntheticCmdline = `CMDLINE: mtdparts=rk29xxnand:` +
-	`0x00000004@0x00000040(parameter),` +
 	`0x0000000c@0x00000044(uboot),` +
 	`0x00000008@0x00000050(misc),` +
 	`0x00000004@0x00000058(dtbo),` +
@@ -29,6 +31,9 @@ const syntheticCmdline = `CMDLINE: mtdparts=rk29xxnand:` +
 const (
 	loaderBytes = int64(100000)
 	rkafStart   = int64(0x1000)
+	// The parameter entry's reserved area, in sectors, as the reference image
+	// carries it.
+	paramPartSize = 0x4000
 )
 
 func testDocument(t *testing.T) *parameter.Document {
@@ -37,7 +42,7 @@ func testDocument(t *testing.T) *parameter.Document {
 	if err != nil {
 		t.Fatalf("parse synthetic parameter: %v", err)
 	}
-	if doc.PartitionCount != 12 {
+	if doc.PartitionCount != 11 {
 		t.Fatalf("synthetic parameter has %d partitions, want 12", doc.PartitionCount)
 	}
 	return doc
@@ -62,7 +67,10 @@ func testImage() *rkfw.Image {
 	}
 
 	var items []rkfw.Item
-	items = add(items, "parameter", 0x40, 2048)
+	items = add(items, "parameter", 0, 2048)
+	// The parameter entry's reserved area, in sectors, as the reference image
+	// carries it; without it the copies cannot be placed.
+	items[0].NandSize = paramPartSize
 	items = add(items, "uboot", 0x44, 6144)
 	items = add(items, "misc", 0x50, 4096)
 	items = add(items, "dtbo", 0x58, 2048)
@@ -97,7 +105,7 @@ func TestBuildReportStagesAndCoverage(t *testing.T) {
 		t.Fatalf("BuildReport: %v", err)
 	}
 
-	if got, want := len(rep.Partitions), 12; got != want {
+	if got, want := len(rep.Partitions), 11; got != want {
 		t.Fatalf("partitions = %d, want %d", got, want)
 	}
 	if !rep.GPT.DiskDerived || !rep.GPT.DiskKnown {
@@ -117,7 +125,8 @@ func TestBuildReportStagesAndCoverage(t *testing.T) {
 	}
 
 	// Stage projection: ul, gpt, one wl per payload item sorted by LBA, rd.
-	wantPhases := []string{"ul", "gpt", "wl", "wl", "wl", "wl", "wl", "wl", "wl", "rd"}
+	// The parameter entry has no wl stage: the gpt stage writes it.
+	wantPhases := []string{"ul", "gpt", "wl", "wl", "wl", "wl", "wl", "wl", "rd"}
 	var gotPhases []string
 	for _, st := range rep.Stages {
 		gotPhases = append(gotPhases, st.Phase)
@@ -129,7 +138,7 @@ func TestBuildReportStagesAndCoverage(t *testing.T) {
 	for _, st := range rep.Stages[2 : len(rep.Stages)-1] {
 		names = append(names, st.Name)
 	}
-	wantOrder := "parameter,uboot,misc,dtbo,boot,rootfs,state"
+	wantOrder := "uboot,misc,dtbo,boot,rootfs,state"
 	if strings.Join(names, ",") != wantOrder {
 		t.Fatalf("wl order = %v, want %s", names, wantOrder)
 	}
@@ -137,9 +146,27 @@ func TestBuildReportStagesAndCoverage(t *testing.T) {
 	if got, want := rep.Stages[0].Bytes, loaderBytes; got != want {
 		t.Fatalf("ul bytes = %d, want %d", got, want)
 	}
+	// The gpt stage covers the IDB, the primary and backup GPT, and every
+	// parameter copy.
 	idbWant := (loaderBytes + 511) / 512 * 512
-	if got := rep.Stages[1].Bytes; got != idbWant {
-		t.Fatalf("gpt bytes = %d, want %d", got, idbWant)
+	gptWant := idbWant + (gpt.PrimarySectors+gpt.BackupSectors)*512 + parameter.ReplicaCount*2048
+	if got := rep.Stages[1].Bytes; got != gptWant {
+		t.Fatalf("gpt bytes = %d, want %d (IDB + GPT + parameter copies)", got, gptWant)
+	}
+	if rep.IDBBytes != idbWant {
+		t.Fatalf("IDB bytes = %d, want %d", rep.IDBBytes, idbWant)
+	}
+	if rep.ParameterWrite == nil {
+		t.Fatal("the report has no parameter write plan")
+	}
+	if rep.ParameterWrite.Copies != parameter.ReplicaCount {
+		t.Fatalf("parameter copies = %d, want %d", rep.ParameterWrite.Copies, parameter.ReplicaCount)
+	}
+	if got, want := rep.ParameterWrite.Replicas[0].LBA, uint64(0x2000); got != want {
+		t.Fatalf("first parameter copy at LBA 0x%x, want 0x%x", got, want)
+	}
+	if got, want := rep.ParameterWrite.Replicas[1].LBA-rep.ParameterWrite.Replicas[0].LBA, uint64(0x800); got != want {
+		t.Fatalf("parameter stride = 0x%x, want 0x%x", got, want)
 	}
 	if rep.Stages[len(rep.Stages)-1].Bytes != 0 {
 		t.Fatal("rd must have zero transfer bytes")
@@ -153,9 +180,12 @@ func TestBuildReportStagesAndCoverage(t *testing.T) {
 		}
 	}
 
-	// Total transfer bytes = loader + IDB + every padded payload.
-	wantTotal := loaderBytes + idbWant
+	// Total transfer bytes = loader + the gpt stage + every padded payload.
+	wantTotal := loaderBytes + gptWant
 	for _, it := range testImage().Items {
+		if it.Name == "parameter" {
+			continue // written by the gpt stage, not as a payload
+		}
 		wantTotal += int64(it.PaddedSize)
 	}
 	if rep.TotalBytes != wantTotal {
@@ -164,9 +194,9 @@ func TestBuildReportStagesAndCoverage(t *testing.T) {
 
 	// STATE: 5 GiB partition, 1 GiB payload, 4 GiB uncovered and explicitly
 	// reported rather than silently dropped.
-	state := rep.Partitions[10]
+	state := rep.Partitions[9]
 	if state.Name != "state" {
-		t.Fatalf("partition 10 = %q", state.Name)
+		t.Fatalf("partition 9 = %q", state.Name)
 	}
 	const gib = int64(1) << 30
 	if state.SizeBytes != 5*gib {

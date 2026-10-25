@@ -141,6 +141,16 @@ func runResultSummary(rep *uf.Report) []string {
 		lines = append(lines, fmt.Sprintf("  gpt   IDB model=%s verified=%t lba=%d bytes=%d",
 			rep.IDB.Model, rep.IDB.Verified, rep.IDB.LBA, rep.IDB.Bytes))
 	}
+	if rep.GPT != nil {
+		lines = append(lines, fmt.Sprintf("  gpt   GPT entries=%d primary=LBA 0x%x/%d B backup=LBA 0x%x/%d B verified=%t rebuilt=%t",
+			rep.GPT.Entries, rep.GPT.PrimaryLBA, rep.GPT.PrimaryBytes, rep.GPT.BackupLBA, rep.GPT.BackupBytes,
+			rep.GPT.Verified, rep.GPT.Rebuilt))
+	}
+	if rep.Parameter != nil {
+		lines = append(lines, fmt.Sprintf("  gpt   parameter copies=%d written=%d skipped=%d bytes=%d base=0x%x stride=0x%x verified=%t",
+			rep.Parameter.Copies, rep.Parameter.Written, rep.Parameter.Skipped, rep.Parameter.Bytes,
+			rep.Parameter.BaseLBA, rep.Parameter.StrideLBA, rep.Parameter.Verified))
+	}
 	if rep.Erase != nil {
 		lines = append(lines, fmt.Sprintf("  erase mode=%s tails=%d bytes=%d status=%s", rep.Erase.Mode, rep.Erase.Tails, rep.Erase.Bytes, rep.Erase.Status))
 	}

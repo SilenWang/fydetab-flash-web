@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
 	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
 	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
 	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
@@ -176,14 +177,8 @@ func TestPlanFromReportCarriesLoaderAndIDB(t *testing.T) {
 	if plan.Loader == nil || plan.Loader.Length != img.LoaderLength {
 		t.Fatalf("plan loader = %+v, want length %d", plan.Loader, img.LoaderLength)
 	}
-	var gptBytes int64
-	for _, st := range rep.Stages {
-		if st.Phase == "gpt" {
-			gptBytes = st.Bytes
-		}
-	}
-	if plan.IDB.Bytes != gptBytes || plan.IDB.LBASector != 64 {
-		t.Fatalf("plan IDB = %+v, want %d bytes at LBA 64", plan.IDB, gptBytes)
+	if plan.IDB.Bytes != rep.IDBBytes || plan.IDB.LBASector != 64 {
+		t.Fatalf("plan IDB = %+v, want %d bytes at LBA 64", plan.IDB, rep.IDBBytes)
 	}
 	if plan.Chip != "RK3588" {
 		t.Fatalf("plan chip = %q, want RK3588", plan.Chip)
@@ -211,8 +206,8 @@ func TestRunMockBareImageSucceedsAndLogs(t *testing.T) {
 	if !rep.OK || !rep.Reset || rep.IDB != nil {
 		t.Fatalf("report = %+v", rep)
 	}
-	if len(rep.Items) != 3 {
-		t.Fatalf("items = %d, want 3", len(rep.Items))
+	if len(rep.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(rep.Items))
 	}
 	if rep.Device.Mode != "LOADER" {
 		t.Fatalf("device mode = %q, want LOADER", rep.Device.Mode)
@@ -311,8 +306,8 @@ func TestRunMockResumeFromSkipsItems(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &rep); err != nil {
 		t.Fatalf("decode report: %v", err)
 	}
-	if !rep.Resumed || len(rep.Skipped) != 2 {
-		t.Fatalf("resume state = %t skipped %v, want 2 skipped items", rep.Resumed, rep.Skipped)
+	if !rep.Resumed || len(rep.Skipped) != 1 {
+		t.Fatalf("resume state = %t skipped %v, want 1 skipped item", rep.Resumed, rep.Skipped)
 	}
 	if strings.Join(rep.Completed, ",") != "boot" {
 		t.Fatalf("completed = %v, want [boot]", rep.Completed)
@@ -452,6 +447,20 @@ func bareTrace(plan *uf.Plan) uf.Trace {
 		uf.Frame{Kind: uf.FrameReadData, Length: intPtr(11), RespondHex: hex.EncodeToString(flash)},
 		uf.Frame{Kind: uf.FrameCSW},
 	)
+	gptWrite := func(lba uint32, sectors int) {
+		add(
+			uf.Frame{Kind: uf.FrameCBW, Op: intPtr(int(uf.OpWriteLBA)), LBA: u32Ptr(lba), Sectors: intPtr(sectors)},
+			uf.Frame{Kind: uf.FrameWriteData, Length: intPtr(sectors * 512)},
+			uf.Frame{Kind: uf.FrameCSW},
+		)
+	}
+	if plan.GPT != nil {
+		gptWrite(0, gpt.PrimarySectors)
+		gptWrite(uint32(plan.DiskSectors-uint64(gpt.BackupSectors)), gpt.BackupSectors)
+		for _, r := range plan.GPT.Parameter.Replicas() {
+			gptWrite(uint32(r.LBA), int(r.Sectors))
+		}
+	}
 	for _, it := range plan.Items {
 		binary.LittleEndian.PutUint32(flash[0:4], uint32(plan.DiskSectors))
 		for off := int64(0); off < it.PaddedSize; off += 128 * 512 {

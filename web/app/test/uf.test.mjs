@@ -64,7 +64,7 @@ test('the wasm core plans and executes a write with the image-embedded loader', 
     assert.equal(res.facts.loaderSha256.length, 64);
     assert.ok(res.facts.loaderLength > 0);
     assert.match(res.facts.loaderBuildTime, /^\d{4}-\d{2}-\d{2} /);
-    assert.equal(res.facts.items, 4);
+    assert.equal(res.facts.items, 3);
     assert.ok(res.facts.uncoveredBytes > 0, 'the demo must leave a tail to decide about');
     assert.equal(res.facts.uncoveredTails > 0, true);
     assert.match(res.facts.uncoveredPartitions, /state/);
@@ -106,7 +106,7 @@ test('the wasm core plans and executes a write with the image-embedded loader', 
     assert.equal(res.run.loader.sha256, res.facts.loaderSha256);
     assert.equal(res.run.device.mode, 'LOADER');
     assert.equal(res.run.reset, true);
-    assert.equal(res.run.items.length, 4);
+    assert.equal(res.run.items.length, 3);
     for (const item of res.run.items) {
       assert.equal(item.status, 'ok', `${item.name}: ${item.status}`);
     }

@@ -85,7 +85,8 @@ func TestV23DryRunPlan(t *testing.T) {
 	}
 
 	// The item table drives the plan: 7 payload items map onto partitions,
-	// package-file/bootloader/parameter do not.
+	// package-file/bootloader/parameter do not. The parameter entry is written
+	// by the gpt stage instead.
 	var written []string
 	for _, it := range rep.Items {
 		if it.Action == actionWrite {
@@ -95,6 +96,50 @@ func TestV23DryRunPlan(t *testing.T) {
 	want := []string{"STATE", "KERN-A", "ROOT-A", "OEM", "resource", "uboot", "EFI-SYSTEM"}
 	if strings.Join(written, ",") != strings.Join(want, ",") {
 		t.Errorf("write items = %v, want %v", written, want)
+	}
+	for _, it := range rep.Items {
+		if it.Name != "parameter" {
+			continue
+		}
+		if it.Action != actionParameter {
+			t.Errorf("parameter action = %q, want %q", it.Action, actionParameter)
+		}
+	}
+
+	// The gpt stage carries the partition table and the parameter block, on top
+	// of the IDB: the stage's byte count must account for all three.
+	var gptStage *Stage
+	for i := range rep.Stages {
+		if rep.Stages[i].Phase == "gpt" {
+			gptStage = &rep.Stages[i]
+		}
+	}
+	if gptStage == nil {
+		t.Fatal("no gpt stage")
+	}
+	tableBytes := int64(67) * 512 // primary 34 + backup 33 sectors
+	parm := rep.ParameterWrite
+	if parm == nil {
+		t.Fatal("the plan has no parameter write")
+	}
+	if parm.Copies != 8 {
+		t.Errorf("parameter copies = %d, want 8", parm.Copies)
+	}
+	if got, want := parm.Replicas[0].LBA, uint64(0x2000); got != want {
+		t.Errorf("first parameter copy at LBA 0x%x, want 0x%x", got, want)
+	}
+	if got, want := parm.Replicas[1].LBA-parm.Replicas[0].LBA, uint64(0x800); got != want {
+		t.Errorf("parameter copy stride = 0x%x, want 0x%x", got, want)
+	}
+	if !parm.CRCOK {
+		t.Error("the parameter block's checksum does not verify")
+	}
+	if want := rep.IDBBytes + tableBytes + parm.TotalBytes(); gptStage.Bytes != want {
+		t.Errorf("gpt stage = %d bytes, want %d (IDB + table + parameter copies)", gptStage.Bytes, want)
+	}
+	// The payload is untouched by this stage: 7.79 GiB stays 7.79 GiB.
+	if rep.TotalBytes < 8_300_000_000 || rep.TotalBytes > 8_400_000_000 {
+		t.Errorf("total transfer = %d bytes, want the ~7.79 GiB payload plus a few MiB", rep.TotalBytes)
 	}
 }
 

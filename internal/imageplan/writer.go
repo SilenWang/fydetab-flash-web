@@ -3,6 +3,8 @@ package imageplan
 import (
 	"fmt"
 
+	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
+	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
 	"github.com/SilenWang/rk3588-webflasher/internal/uf"
 )
 
@@ -42,8 +44,26 @@ func WriterPlan(rep *Report, loader *EmbeddedLoader) (*uf.Plan, error) {
 	}
 	for _, st := range rep.Stages {
 		if st.Phase == "gpt" {
-			plan.IDB = uf.IDBPlan{LBASector: uf.IDBDefaultLBA, Bytes: st.Bytes, Rewrite: rep.IDBRewrite}
+			plan.IDB = uf.IDBPlan{LBASector: uf.IDBDefaultLBA, Bytes: rep.IDBBytes, Rewrite: rep.IDBRewrite}
 			break
+		}
+	}
+	// The partition table and the parameter block are part of the same stage:
+	// the plan carries the parameter-derived entries so the runner can rebuild
+	// the GPT against the flash size the device actually reports.
+	if rep.GPT != nil && rep.ParameterWrite != nil {
+		plan.GPT = &uf.GPTPlan{
+			Partitions: partitionsOf(rep.GPT),
+			Parameter: &uf.ParameterPlan{
+				FileOffset:   rep.ParameterWrite.FileOffset,
+				Size:         rep.ParameterWrite.Bytes,
+				CopyBytes:    rep.ParameterWrite.CopyBytes,
+				Copies:       rep.ParameterWrite.Copies,
+				First4Access: rep.ParameterWrite.First4Access,
+				BaseLBA:      rep.ParameterWrite.Replicas[0].LBA,
+				StrideLBA:    rep.ParameterWrite.Replicas[1].LBA - rep.ParameterWrite.Replicas[0].LBA,
+				CRCOK:        rep.ParameterWrite.CRCOK,
+			},
 		}
 	}
 	for _, it := range rep.Items {
@@ -85,4 +105,22 @@ func ApplyEraseDecision(rep *Report, mode uf.EraseMode) {
 	}
 	rep.Erase = dec
 	rep.Notes = append(rep.Notes, fmt.Sprintf("- 擦除语义（--erase-tail=%s）：%s；未覆盖区间共 %s。", mode, mode.Describe(), HumanBytes(dec.Bytes)))
+}
+
+// partitionsOf converts the planned GPT entries back into the parameter table
+// the runner rebuilds the partition table from. The runner rebuilds it because
+// only the device knows how many sectors its flash has, and the backup GPT's
+// position depends on that.
+func partitionsOf(lay *gpt.Layout) []parameter.Partition {
+	out := make([]parameter.Partition, 0, len(lay.Entries))
+	for _, e := range lay.Entries {
+		out = append(out, parameter.Partition{
+			Name:    e.Name,
+			Flags:   e.Flags,
+			First:   e.FirstLBA,
+			Sectors: e.Sectors,
+			Grow:    e.Grow,
+		})
+	}
+	return out
 }

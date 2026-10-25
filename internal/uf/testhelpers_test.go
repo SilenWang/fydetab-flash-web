@@ -3,9 +3,12 @@ package uf
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
+	"github.com/SilenWang/rk3588-webflasher/internal/rkcrc"
 	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
 )
 
@@ -103,6 +106,53 @@ func rkbootLoader(t *testing.T) []byte {
 	return buf
 }
 
+// fixturePartitions is the partition table the fixture's parameter block and
+// its GPT plan describe.
+func fixturePartitions() []parameter.Partition {
+	return []parameter.Partition{
+		{Name: "boot", First: 0x1000, Sectors: 0x10},
+		{Name: "state", First: 0x8000, Sectors: 0x60},
+	}
+}
+
+// parameterBlock builds the PARM-wrapped table the fixture's parameter entry
+// carries. It describes exactly the partitions the plan's GPT describes, which
+// is what the runner checks before it writes either of them.
+func parameterBlock(t *testing.T, parts []parameter.Partition) []byte {
+	t.Helper()
+	var list []string
+	for _, p := range parts {
+		list = append(list, fmt.Sprintf("0x%08x@0x%08x(%s)", p.Sectors, p.First, p.Name))
+	}
+	text := "FIRMWARE_VER: 9.9\nTYPE: GPT\n" +
+		"CMDLINE: mtdparts=rk29xxnand:" + strings.Join(list, ",") + "\n"
+	out := make([]byte, 8+len(text)+4)
+	copy(out, "PARM")
+	binary.LittleEndian.PutUint32(out[4:8], uint32(len(text)))
+	copy(out[8:], text)
+	binary.LittleEndian.PutUint32(out[8+len(text):], rkcrc.Checksum([]byte(text)))
+	return out
+}
+
+// setPartitions rewrites the fixture's parameter block so it still describes
+// exactly the partitions the plan writes, which is the invariant the runner
+// enforces.
+func (l *testLayout) setPartitions(t *testing.T, plan *Plan, parts []parameter.Partition) {
+	t.Helper()
+	block := parameterBlock(t, parts)
+	need := int(l.paramOff) + len(block)
+	if need > len(l.source) {
+		grown := make([]byte, need)
+		copy(grown, l.source)
+		l.source = grown
+		l.sourceLength = int64(need)
+	}
+	copy(l.source[l.paramOff:], block)
+	l.paramBlock = block
+	plan.GPT.Partitions = parts
+	plan.GPT.Parameter.Size = int64(len(block))
+}
+
 // testLayout describes the synthetic image the runner tests read.
 type testLayout struct {
 	loader       []byte
@@ -111,6 +161,8 @@ type testLayout struct {
 	bootBytes    int64
 	stateOff     int64
 	stateBytes   int64
+	paramOff     int64
+	paramBlock   []byte
 	source       []byte
 	sourceLength int64
 }
@@ -118,15 +170,18 @@ type testLayout struct {
 func newTestLayout(t *testing.T) *testLayout {
 	t.Helper()
 	loader := rkbootLoader(t)
+	block := parameterBlock(t, fixturePartitions())
 	l := &testLayout{
 		loader:     loader,
 		loaderOff:  0,
-		bootOff:    0x2000,
+		bootOff:    0x1800,
 		bootBytes:  4096,
 		stateOff:   0x3000,
 		stateBytes: 8192,
+		paramOff:   0x5000,
+		paramBlock: block,
 	}
-	total := int(l.stateOff + l.stateBytes)
+	total := int(l.paramOff) + len(block)
 	l.source = make([]byte, total)
 	copy(l.source[l.loaderOff:], loader)
 	for i := int(l.bootOff); i < int(l.bootOff+l.bootBytes); i++ {
@@ -135,6 +190,7 @@ func newTestLayout(t *testing.T) *testLayout {
 	for i := int(l.stateOff); i < int(l.stateOff+l.stateBytes); i++ {
 		l.source[i] = byte(i * 11)
 	}
+	copy(l.source[l.paramOff:], block)
 	l.sourceLength = int64(total)
 	return l
 }
@@ -147,17 +203,35 @@ func (l *testLayout) plan(t *testing.T) *Plan {
 		t.Fatalf("build fixture IDB: %v", err)
 	}
 	idbBytes := int64(len(idb))
+	parts := fixturePartitions()
+	replicas, err := parameter.ReplicaLayout(0, 0x4000, true, 2048)
+	if err != nil {
+		t.Fatalf("fixture replica layout: %v", err)
+	}
 	p := &Plan{
 		Image:  "synthetic-update.img",
 		Chip:   "RK3588",
 		Loader: &LoaderPlan{FileOffset: l.loaderOff, Length: int64(len(l.loader))},
 		IDB:    IDBPlan{LBASector: IDBDefaultLBA, Bytes: idbBytes},
+		GPT: &GPTPlan{
+			Partitions: parts,
+			Parameter: &ParameterPlan{
+				FileOffset:   l.paramOff,
+				Size:         int64(len(l.paramBlock)),
+				CopyBytes:    2048,
+				Copies:       len(replicas),
+				First4Access: true,
+				BaseLBA:      replicas[0].LBA,
+				StrideLBA:    replicas[1].LBA - replicas[0].LBA,
+				CRCOK:        true,
+			},
+		},
 		Items: []Item{
 			{Name: "boot", Partition: "boot", FileOffset: l.bootOff, Size: l.bootBytes, PaddedSize: l.bootBytes, TargetLBA: 0x1000},
-			{Name: "state", Partition: "state", FileOffset: l.stateOff, Size: l.stateBytes, PaddedSize: l.stateBytes, TargetLBA: 0x2000},
+			{Name: "state", Partition: "state", FileOffset: l.stateOff, Size: l.stateBytes, PaddedSize: l.stateBytes, TargetLBA: 0x8000},
 		},
 		Tails: []Tail{
-			{Partition: "state", FirstLBA: 0x2000 + uint64(l.stateBytes)/SectorSize, Bytes: 4096},
+			{Partition: "state", FirstLBA: 0x8000 + uint64(l.stateBytes)/SectorSize, Bytes: 4096},
 		},
 		DiskSectors: 0x10000,
 		DiskKnown:   true,
