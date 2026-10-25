@@ -63,11 +63,14 @@ host <─bulk IN ─── 13 B CSW
 只读名单里还有 `READ_FLASH_ID`(0x01)、`READ_LBA`(0x14)、`READ_SDRAM`(0x17)、`READ_EFUSE`(0x20)、
 `READ_NEW_EFUSE`(0x24)，它们同样是读操作，但 M0 不需要，`internal/rockusb` 只把它们登记为允许的操作码，不提供命令定义。
 
-**写/擦/复位操作码**（本仓库刻意不声明，`TestNoWritePath` 会拦住重新引入）：
+**写/擦/复位操作码**（`internal/rockusb` 刻意不声明，`TestNoWritePath` 会拦住重新引入）：
 `WRITE_SECTOR`(0x05)、`WRITE_LBA`(0x15)、`ERASE_NORMAL`(0x06)、`ERASE_FORCE`(0x0B)、
 `ERASE_LBA`(0x25)、`ERASE_SYSTEMDISK`(0x16)、`CHANGE_STORAGE`(0x2A)、`DEVICE_RESET`(0xFF)、
 `WRITE_SDRAM`(0x18)、`EXECUTE_SDRAM`(0x19)、`WRITE_EFUSE`(0x1F)、`WRITE_NEW_EFUSE`(0x23)、
 `SET_RESET_FLAG`(0x1E)。
+
+M3a 起，`WRITE_LBA`/`ERASE_LBA`/`DEVICE_RESET` 的 CBW 布局与重试策略在 `internal/uf` 里实现
+（不在只读包里），详见 [`uf-write-path.md`](uf-write-path.md)。
 
 ## 5. 数据阶段布局
 

@@ -2,9 +2,12 @@
 
 浏览器里复刻 Rockchip `upgrade_tool` 的刷机路径：协议与编排用 Go 编译成 WebAssembly，USB 走 WebUSB，完全本地运行。
 
-**当前阶段：M1（Go/WASM 核心 + WebUSB bridge + `ld`/`cd`/`sd` + Download Boot + 只读信息）。**
+**当前阶段：M1（Go/WASM 核心 + WebUSB bridge + `ld`/`cd`/`sd` + Download Boot + 只读信息），
+加上 M2（离线 `uf --dry-run` 计划）与 M3a（写入层 + `uf` 状态机，mock/回放验证）。**
 M1 能把用户本地选择的 loader 通过 EP0 vendor request 写进 maskrom 的 RAM（Download Boot），让设备重新枚举成
-LOADER，然后读取 chip / flash / capability / storage。**仍然没有写 flash、擦除、复位或切换存储的路径。**
+LOADER，然后读取 chip / flash / capability / storage。M3a 实现了 `WRITE_LBA`/`ERASE_LBA`/
+`DEVICE_RESET` 与完整 `uf` 状态机，但**只在内存设备与录制 trace 上运行**：浏览器/真机写入（WebUSB 绑定）
+属于 M3b，本阶段没有可点进真机的写 flash 路径。
 
 > 为什么 maskrom 下读不到信息：裸 maskrom 不接受 rockusb 的 bulk CBW，5 条只读命令的 31 字节 CBW 全部被
 > STALL（M0b 真机实测，见 `internal/rockusb/testdata/maskrom-cbw-stall.json`）。必须先 `db` 进 LOADER。
@@ -134,7 +137,7 @@ pixi run test
 - 重新枚举后的授权：按“实例授权失效、需要重新点授权设备”实现（`connect` 事件会自动 `ld`），
   按 VID/PID 策略是否仍生效等真机结论。
 - 大镜像、`File.slice()` 流式读取属于后续阶段；本阶段一次读入 loader（~140 KiB）。
-- 没有 `uf`、没有写 flash 的路径。
+- 页面仍没有写 flash 的路径：写入状态机只在 `internal/uf` + `uf --mock/--replay` 里，WebUSB 绑定是 M3b。
 
 ## M0b 真机验收清单
 
@@ -193,6 +196,40 @@ RKFW_SLICES_DIR=$PWD/rk-slices pixi run test
 
 细节见 [`docs/rkfw-rkaf-format.md` §9](docs/rkfw-rkaf-format.md)。
 
+## M3a：写入层与 `uf` 状态机（mock/回放）
+
+M3a 把 M2 的计划变成真实的 rockusb 写命令，但**只在内存设备和录制 trace 上执行**：
+
+```bash
+# 用内存 RK3588 设备走完整 uf（含 Download Boot、IDB、逐 item、rd）
+pixi run uf --mock update.img
+
+# 注入失败，看中止与续跑提示
+pixi run uf --mock --mock-fault failed:uboot update.img
+
+# 超时（默认重试 1 次）
+pixi run uf --mock --mock-fault timeout:boot update.img
+
+# 回放一份录制的控制/bulk 序列
+pixi run uf --replay trace.json update.img
+
+# 导出 NDJSON 日志（header / 每次 transfer 摘要 / 进度快照 / result）
+pixi run uf --mock --log uf.ndjson update.img
+```
+
+- 写入命令：`WRITE_LBA(0x15)`、`ERASE_LBA(0x25)`、`DEVICE_RESET(0xFF)`；一次写 64 KiB，
+  进度/重试块 1–4 MiB（`--chunk-size`），只有超时会重试。
+- 状态机：`ul → td → chip → flash → gpt(IDB) → wl <item> → erase → rd`；
+  失败时报告 `nextItem` 与 `--resume-from <item>`。
+- `--erase-tail=none|fill|erase-lba` 显式回答“镜像没覆盖的分区尾部要不要擦”，
+  dry-run 与运行日志都会打印这个选择。
+- IDB 字节模型（512 对齐 + 逐扇区 RC4 + LBA 64）**待真机核对**，代码里是可替换的
+  `uf.IDBModel`（`--idb-model rk28-rc4|raw-loader`）。
+- 真机写入（WebUSB 绑定）是 M3b；本阶段不打开 USB 设备。
+
+协议字段、mock trace 格式、日志 schema 与全部待核对项见
+[`docs/uf-write-path.md`](docs/uf-write-path.md)。
+
 ## 已知限制（有意留到后续阶段）
 
 - **ReadFlashInfo 的短读**：rkdeveloptool 对这一条读 512 B 并接受 ≥11 B；本页按 CBW 里声明的 11 B 读取，以保持 CSW 不错位。若某台设备实际发更多字节，会落成 `ERR_CMD_NOTMATCH` 并记录，不会顺手多读——这正好是要在 M0b 里确认的事实。
@@ -205,11 +242,14 @@ RKFW_SLICES_DIR=$PWD/rk-slices pixi run test
 ```
 pixi.toml / pixi.lock       依赖与任务（唯一入口）
 internal/rockusb/           只读协议子集 + 单测
+internal/uf/                写入层、IDB 模型、uf 状态机、mock/回放与 JSON 日志
+cmd/uf/                     uf --dry-run 计划 + --mock/--replay 写入状态机
 cmd/genprotocol/            生成 web/probe/protocol.js
 web/probe/                  index.html / probe.js / rockusb.js / styles.css
                             protocol.js 为生成物；*.test.mjs 为单测与伪设备冒烟测试
 tools/serve.mjs             本地静态服务
 docs/protocol-notes.md      协议笔记与待确认项
+docs/uf-write-path.md       写入命令、状态机、IDB/擦除假设、mock trace 与日志格式
 ```
 
 ## 协议来源与许可

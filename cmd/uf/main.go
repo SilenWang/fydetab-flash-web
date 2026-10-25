@@ -1,28 +1,44 @@
-// Command uf plans a Rockchip "uf" firmware upgrade for an RKFW/RKAF update
-// image.
+// Command uf plans and (against a mock device) executes a Rockchip "uf"
+// firmware upgrade for an RKFW/RKAF update image.
 //
-// This build (M2) implements the offline plan only: `uf --dry-run <image>`
-// parses the container, verifies its checksums and prints every phase and
-// partition write it would perform. It never opens a USB device, never writes
-// or erases flash and never resets the board. The actual writer lands in M3.
+// Two modes exist in this build:
+//
+//   - `uf --dry-run <image>` prints the M2 plan: every phase, partition write
+//     and uncovered range. It opens no USB device and writes nothing.
+//   - `uf --mock` / `uf --replay <trace>` run the M3a write state machine
+//     against an in-memory device or a recorded trace. They exercise the same
+//     rockusb.Transport the browser bridge will provide, so the state machine,
+//     retries, failure abort and JSON log are verified without touching a board.
+//
+// Writing to a real device arrives with the WebUSB integration (M3b); this
+// command refuses to pretend otherwise.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
 	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
+	"github.com/SilenWang/rk3588-webflasher/internal/uf"
 )
 
 const (
 	toolName      = "uf"
-	versionString = "M2 (offline plan / --dry-run only)"
+	versionString = "M3a (mock/replay write state machine; --dry-run plan unchanged)"
+)
+
+const (
+	modeDryRun = "dry-run"
+	modeMock   = "mock"
+	modeReplay = "replay"
 )
 
 func main() {
@@ -34,17 +50,29 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 
 	var (
-		dryRun       = fs.Bool("dry-run", false, "print the flash plan and exit without touching a device (required in this build)")
-		jsonOut      = fs.Bool("json", false, "emit the plan as JSON")
+		dryRun       = fs.Bool("dry-run", false, "print the flash plan and exit without touching a device")
+		mockRun      = fs.Bool("mock", false, "run the write state machine against an in-memory RK3588 device (no USB)")
+		replayPath   = fs.String("replay", "", "run the write state machine against a recorded trace (JSON)")
+		logPath      = fs.String("log", "", "write the NDJSON run log to this path ('-' = stdout)")
+		jsonOut      = fs.Bool("json", false, "emit the plan (--dry-run) or the run report (--mock/--replay) as JSON")
 		noVerify     = fs.Bool("no-verify", false, "skip the streaming MD5 / RKAF CRC checks")
-		noReset      = fs.Bool("noreset", false, "plan without the final device reset (rd)")
+		noReset      = fs.Bool("noreset", false, "skip the final device reset (rd)")
 		flashSectors = fs.Uint64("flash-sectors", 0, "flash size in 512-byte sectors (default: derive from the parameter table)")
+		eraseTail    = fs.String("erase-tail", string(uf.EraseNone), "what to do with partition tails the image does not fill: none|fill|erase-lba")
+		resumeFrom   = fs.String("resume-from", "", "resume at this item (skip every item before it)")
+		chunkSize    = fs.Int64("chunk-size", 0, "write chunk in bytes, 1..4 MiB (progress/retry granularity)")
+		retries      = fs.Int("retries", 1, "extra attempts for a timed out USB transfer")
+		timeout      = fs.Duration("timeout", 0, "per USB transfer deadline (default 5s)")
+		idbModel     = fs.String("idb-model", uf.ModelRK28RC4, "IDB byte model: "+strings.Join(uf.IDBModelNames(), "|"))
+		mockFault    = fs.String("mock-fault", "", "inject a mock failure: <timeout|failed|stall|disconnect>:<item|idb|lba:0x...>")
 		showVersion  = fs.Bool("version", false, "print the tool version and exit")
 	)
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: %s --dry-run [options] <update.img>\n\n", toolName)
-		fmt.Fprintln(stderr, "M2 implements the offline plan only: no USB device is opened and no flash write,")
-		fmt.Fprintln(stderr, "erase or reset is performed.")
+		fmt.Fprintf(stderr, "Usage: %s --dry-run [options] <update.img>\n", toolName)
+		fmt.Fprintf(stderr, "       %s --mock [options] <update.img>\n", toolName)
+		fmt.Fprintf(stderr, "       %s --replay <trace.json> [options] <update.img>\n\n", toolName)
+		fmt.Fprintln(stderr, "--dry-run opens no USB device. --mock/--replay exercise the write path against an")
+		fmt.Fprintln(stderr, "in-memory device; writing to real hardware lands with the WebUSB integration (M3b).")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Options:")
 		fs.PrintDefaults()
@@ -61,10 +89,37 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fs.Usage()
 		return 2
 	}
-	if !*dryRun {
-		fmt.Fprintf(stderr, "%s: writing is not implemented in this build; re-run with --dry-run\n", toolName)
+
+	mode := ""
+	switch {
+	case *dryRun && (*mockRun || *replayPath != ""):
+		fmt.Fprintf(stderr, "%s: --dry-run cannot be combined with --mock/--replay\n", toolName)
+		return 2
+	case *dryRun:
+		mode = modeDryRun
+	case *mockRun && *replayPath != "":
+		fmt.Fprintf(stderr, "%s: --mock and --replay are mutually exclusive\n", toolName)
+		return 2
+	case *mockRun:
+		mode = modeMock
+	case *replayPath != "":
+		mode = modeReplay
+	default:
+		fmt.Fprintf(stderr, "%s: writing to a real device is not part of this build; use --dry-run to plan, or --mock / --replay <trace> to exercise the write state machine\n", toolName)
 		return 2
 	}
+
+	eraseMode, err := uf.ParseEraseMode(*eraseTail)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", toolName, err)
+		return 2
+	}
+	model, err := uf.IDBModelByName(*idbModel)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", toolName, err)
+		return 2
+	}
+
 	imagePath := fs.Arg(0)
 
 	img, err := rkfw.Open(imagePath)
@@ -116,22 +171,151 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %v\n", toolName, err)
 		return 2
 	}
+	applyEraseDecision(rep, eraseMode)
+
+	if mode == modeDryRun {
+		if *jsonOut {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(rep); err != nil {
+				fmt.Fprintf(stderr, "%s: encode JSON: %v\n", toolName, err)
+				return 2
+			}
+		} else {
+			writeText(stdout, rep)
+		}
+		if ver.Failed() {
+			return 1
+		}
+		return 0
+	}
+
+	if ver.Failed() {
+		fmt.Fprintf(stderr, "%s: refusing to write: image verification failed (use --no-verify to override)\n", toolName)
+		return 1
+	}
+
+	plan, err := planFromReport(rep)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", toolName, err)
+		return 2
+	}
+
+	conn, err := buildConnector(mode, *replayPath, plan, *mockFault)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", toolName, err)
+		return 2
+	}
+
+	src, err := os.Open(imagePath)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", toolName, err)
+		return 2
+	}
+	defer src.Close()
+
+	opts := uf.Options{
+		Timeout:   *timeout,
+		Retries:   *retries,
+		ChunkSize: *chunkSize,
+		EraseTail: eraseMode,
+		NoReset:   *noReset,
+		StartItem: *resumeFrom,
+		IDB:       model,
+		Event:     func(ev uf.Event) { writeEvent(stderr, ev) },
+	}
+	var (
+		logWriter io.WriteCloser
+		rec       *uf.Recorder
+	)
+	if *logPath != "" {
+		w, err := openLog(*logPath, stdout)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: open log: %v\n", toolName, err)
+			return 2
+		}
+		logWriter = w
+		defer logWriter.Close()
+		rec, err = uf.NewRecorder(w, plan, opts)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: log: %v\n", toolName, err)
+			return 2
+		}
+		opts.Trace = rec.Transfer
+		opts.Progress = rec.Progress
+		opts.Event = func(ev uf.Event) {
+			rec.Event(ev)
+			writeEvent(stderr, ev)
+		}
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	res, runErr := uf.Run(ctx, plan, src, conn, opts)
+	if rec != nil {
+		if err := rec.Result(res); err != nil {
+			fmt.Fprintf(stderr, "%s: log: %v\n", toolName, err)
+		}
+	}
 
 	if *jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(rep); err != nil {
+		if err := enc.Encode(res); err != nil {
 			fmt.Fprintf(stderr, "%s: encode JSON: %v\n", toolName, err)
 			return 2
 		}
 	} else {
-		writeText(stdout, rep)
+		for _, line := range runResultSummary(res) {
+			fmt.Fprintln(stdout, line)
+		}
+		if *logPath != "" {
+			fmt.Fprintf(stdout, "log: %s\n", *logPath)
+		}
 	}
-
-	if ver.Failed() {
+	if runErr != nil {
 		return 1
 	}
 	return 0
+}
+
+// buildConnector selects the mock device a run talks to.
+func buildConnector(mode, replayPath string, plan *uf.Plan, mockFault string) (uf.Connector, error) {
+	switch mode {
+	case modeMock:
+		faults, err := parseMockFault(mockFault, plan)
+		if err != nil {
+			return nil, err
+		}
+		return mockConnector(plan, faults), nil
+	case modeReplay:
+		f, err := os.Open(replayPath)
+		if err != nil {
+			return nil, fmt.Errorf("open trace: %w", err)
+		}
+		defer f.Close()
+		trace, err := uf.LoadTrace(f)
+		if err != nil {
+			return nil, err
+		}
+		return uf.NewReplayConnector(uf.ReplaySession{Mode: trace.Mode(), Frames: trace.Frames}), nil
+	}
+	return nil, fmt.Errorf("no device for mode %q", mode)
+}
+
+func writeEvent(w io.Writer, ev uf.Event) {
+	if ev.Level == "info" && ev.Message == "" {
+		return
+	}
+	prefix := "  "
+	switch ev.Level {
+	case "warn":
+		prefix = "warning: "
+	case "error":
+		prefix = "error: "
+	}
+	fmt.Fprintf(w, "%s%s\n", prefix, ev.Message)
 }
 
 func writeText(w io.Writer, rep *Report) {
@@ -140,9 +324,23 @@ func writeText(w io.Writer, rep *Report) {
 	writeStages(w, rep)
 	writePartitions(w, rep)
 	writeUncovered(w, rep)
+	writeErase(w, rep)
 	writeList(w, "warnings", rep.Warnings)
 	writeList(w, "notes", rep.Notes)
 	fmt.Fprintf(w, "\ndry run: nothing was written and no device was opened.\n")
+}
+
+// writeErase prints the explicit answer to "is the uncovered tail erased?", so
+// the choice is visible next to the ranges it applies to.
+func writeErase(w io.Writer, rep *Report) {
+	if rep.Erase == nil {
+		return
+	}
+	fmt.Fprintf(w, "\nerase semantics (--erase-tail=%s): %s\n", rep.Erase.Mode, rep.Erase.Detail)
+	if rep.Erase.Tails > 0 {
+		fmt.Fprintf(w, "  %d tail(s), %s total (not counted in the transfer total unless erased)\n",
+			rep.Erase.Tails, humanBytes(rep.Erase.Bytes))
+	}
 }
 
 func writeKeyValue(w io.Writer, rep *Report) {
