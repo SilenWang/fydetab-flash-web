@@ -14,6 +14,7 @@
 import './wasm/wasm_exec.js';
 import { createBridge } from './bridge.js';
 import { createMockHost } from './mock-host.js';
+import { openZipImage, summarizePackage } from './zip-source.js';
 
 const RPC_TIMEOUT_MS = 15000;
 
@@ -119,10 +120,57 @@ function fromBase64(text) {
   return out;
 }
 
-// resolveImage picks the image the page asked for: the file it sent, or the
-// cached synthetic demo image (built in Go, so the demo parses like a real one).
+// --- zip packages -----------------------------------------------------------
+//
+// A vendor package is a zip around one multi-GiB RKFW image. zip-source.js
+// turns the entry into the same {name, size, read()} object a plain File
+// provides, so the Go planner reads it byte for byte identically — it just
+// decompresses on demand instead of slicing a file.
+//
+// The opened source is cached for the current package: one plan call reads the
+// header, the RKAF table, the parameter item and the loader, and a write started
+// from the same package must see the same entry without re-parsing the archive.
+
+let zipCache = null; // { key, promise }
+
+function zipKey(file) {
+  return `${file.name}:${file.size}:${file.lastModified ?? 0}`;
+}
+
+function zipSource(file) {
+  const key = zipKey(file);
+  if (zipCache && zipCache.key === key) return zipCache.promise;
+  const promise = openZipImage(file, file.name).then((opened) => {
+    post({
+      type: 'zip',
+      zip: file.name,
+      entry: opened.entry,
+      entries: opened.directory.entries.length,
+      zip64: opened.directory.zip64,
+      summary: summarizePackage(opened),
+      skipped: opened.skipped,
+      stats: { ...opened.source.stats },
+    });
+    return opened.source;
+  });
+  zipCache = { key, promise };
+  promise.catch(() => {
+    if (zipCache && zipCache.key === key) zipCache = null;
+  });
+  return promise;
+}
+
+function reportZipStats(id, source) {
+  if (!source || !source.stats) return;
+  post({ type: 'zip-stats', id, stats: { ...source.stats } });
+}
+
+// resolveImage picks the image the page asked for: a plain file, the RKFW entry
+// inside a zip package, or the cached synthetic demo image (built in Go, so the
+// demo parses like a real one).
 async function resolveImage(msg) {
   if (msg.file) return fileSource(msg.file);
+  if (msg.zip) return zipSource(msg.zip);
   if (msg.demo) {
     if (!demoImageCache) {
       const payload = JSON.parse(await globalThis.rk3588.demoImage());
@@ -130,7 +178,7 @@ async function resolveImage(msg) {
     }
     return bytesSource(demoImageCache.name, demoImageCache.bytes);
   }
-  throw new Error('no image supplied (need file or demo)');
+  throw new Error('no image supplied (need file, zip or demo)');
 }
 
 async function runUf(msg, call, resultType = 'uf-result') {
@@ -144,8 +192,12 @@ async function runUf(msg, call, resultType = 'uf-result') {
     }
     post({ type: 'uf-event', id: msg.id, kind, payload: parsed });
   };
-  const text = await call(source, msg.opts ?? {}, onEvent);
-  post({ type: resultType, id: msg.id, result: JSON.parse(text) });
+  try {
+    const text = await call(source, msg.opts ?? {}, onEvent);
+    post({ type: resultType, id: msg.id, result: JSON.parse(text) });
+  } finally {
+    reportZipStats(msg.id, source);
+  }
 }
 
 // --- boot -------------------------------------------------------------------
@@ -245,11 +297,15 @@ self.onmessage = async (event) => {
       case 'image-loader': {
         if (!globalThis.rk3588) throw new Error('core is not ready');
         const source = await resolveImage(msg);
-        const text = await globalThis.rk3588.imageLoader(source);
-        const payload = JSON.parse(text);
-        const bytes = fromBase64(payload.bytes ?? '');
-        delete payload.bytes;
-        post({ type: 'image-loader', id: msg.id, payload, bytes }, [bytes.buffer]);
+        try {
+          const text = await globalThis.rk3588.imageLoader(source);
+          const payload = JSON.parse(text);
+          const bytes = fromBase64(payload.bytes ?? '');
+          delete payload.bytes;
+          post({ type: 'image-loader', id: msg.id, payload, bytes }, [bytes.buffer]);
+        } finally {
+          reportZipStats(msg.id, source);
+        }
         return;
       }
       case 'demo-image': {

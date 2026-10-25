@@ -20,10 +20,12 @@ const ui = {
   banner: $('banner'),
   modeBadge: $('mode-badge'),
   coreBadge: $('core-badge'),
+  netBadge: $('net-badge'),
   devices: $('devices'),
   imageSummary: $('image-summary'),
   loaderSummary: $('loader-summary'),
   imageLabel: $('image-label'),
+  zipSummary: $('zip-summary'),
   fileImage: $('file-image'),
   demoImage: $('btn-demo-image'),
   planButton: $('btn-plan'),
@@ -46,12 +48,22 @@ const ui = {
   errors: $('errors'),
   input: $('command-input'),
   mock: $('chk-mock'),
+  install: $('btn-install'),
+  installNote: $('install-note'),
+  swNote: $('sw-note'),
+  reloadApp: $('btn-reload-app'),
+  reconnect: $('reconnect'),
+  reconnectSteps: $('reconnect-steps'),
+  reconnectAuth: $('btn-reconnect-auth'),
+  reconnectDismiss: $('btn-reconnect-dismiss'),
+  exportLog: $('btn-export-log'),
 };
 
 const state = {
   mode: 'usb', // usb | mock
   ready: false,
   busy: false,
+  coreVersion: '',
   deviceState: null,
   // Loader used by the M1 `db` command.
   loaderBytes: null,
@@ -60,8 +72,9 @@ const state = {
   loaderOverride: null, // {bytes, name} when the user picked a file
   // Image + plan.
   image: null, // File
-  imageKind: null, // file | demo
+  imageKind: null, // file | zip | demo
   imageName: '',
+  zip: null, // {zip, entry, summary, skipped, stats} while reading a package
   plan: null, // {facts, report, loader}
   // Pre-flight choices.
   eraseMode: 'none',
@@ -72,7 +85,18 @@ const state = {
   traceRows: 0,
   lastInfo: null,
   errors: [],
+  // Reconnect wizard: numeric state, rendered into #reconnect.
+  reconnect: { needed: false, cause: '', attempts: 0, since: null },
+  // Install prompt (beforeinstallprompt) and service worker bookkeeping.
+  install: { event: null, installed: false },
+  sw: { registration: null, updateReady: false },
+  // NDJSON export: one record per observable event, capped so a long write
+  // cannot grow the tab without bound.
+  events: [],
+  eventsDropped: 0,
 };
+
+const MAX_EVENTS = 5000;
 
 let worker = null;
 let rpcId = 0;
@@ -99,6 +123,7 @@ function onWorkerMessage(event) {
   switch (msg.type) {
     case 'ready':
       state.ready = true;
+      state.coreVersion = msg.version;
       setCoreBadge('ok', `core ${msg.version}`);
       updateButtons();
       if (msg.mode !== state.mode) {
@@ -147,6 +172,12 @@ function onWorkerMessage(event) {
     }
     case 'inspect':
       renderLoaderSummary(msg.payload);
+      break;
+    case 'zip':
+      renderZip(msg);
+      break;
+    case 'zip-stats':
+      renderZipStats(msg.stats);
       break;
     case 'host':
       handleHostCall(msg);
@@ -282,26 +313,36 @@ function planOptions() {
 }
 
 function imagePayload(extra = {}) {
+  if (state.image && state.imageKind === 'zip') return { zip: state.image, ...extra };
   if (state.image) return { file: state.image, ...extra };
   if (state.imageKind === 'demo') return { demo: true, ...extra };
   return null;
 }
 
+/** isZipPackage recognises the vendor package by name or MIME type. */
+function isZipPackage(file) {
+  if (!file) return false;
+  const name = (file.name ?? '').toLowerCase();
+  const type = (file.type ?? '').toLowerCase();
+  return name.endsWith('.zip') || type === 'application/zip' || type === 'application/x-zip-compressed' || type === 'multipart/x-zip';
+}
+
 async function pickImage(file) {
   if (!file) return;
   state.image = file;
-  state.imageKind = 'file';
+  state.imageKind = isZipPackage(file) ? 'zip' : 'file';
   state.imageName = file.name;
+  state.zip = null;
+  state.plan = null;
+  renderZip();
   ui.imageLabel.textContent = file.name;
-  appendLine(`选择镜像：${file.name}（${formatBytes(file.size)}）`, 'muted');
+  if (state.imageKind === 'zip') {
+    appendLine(`选择 zip 包：${file.name}（${formatBytes(file.size)}）— 只解压需要的字节，不会落盘 3.8 GiB`, 'muted');
+  } else {
+    appendLine(`选择镜像：${file.name}（${formatBytes(file.size)}）`, 'muted');
+  }
   resetEraseChoice();
   await planImage();
-}
-
-/** resetEraseChoice makes the tail decision an explicit act per image. */
-function resetEraseChoice() {
-  state.eraseConfirmed = false;
-  ui.eraseConfirm.checked = false;
 }
 
 async function loadDemoImage() {
@@ -311,6 +352,8 @@ async function loadDemoImage() {
     state.image = null;
     state.imageKind = 'demo';
     state.imageName = payload.name;
+    state.zip = null;
+    renderZip();
     ui.imageLabel.textContent = payload.name;
     appendLine(`演示镜像：${payload.name}（${formatBytes(payload.size)}，合成 RKFW，仅用于演示）`, 'muted');
     resetEraseChoice();
@@ -318,6 +361,61 @@ async function loadDemoImage() {
   } catch (err) {
     appendError(err.message);
   }
+}
+
+// --- zip package view -------------------------------------------------------
+
+function renderZip(msg) {
+  if (!msg) {
+    ui.zipSummary.hidden = true;
+    ui.zipSummary.textContent = '';
+    return;
+  }
+  state.zip = {
+    zip: msg.zip,
+    entry: msg.entry,
+    entries: msg.entries ?? 0,
+    zip64: Boolean(msg.zip64),
+    summary: msg.summary,
+    skipped: msg.skipped ?? [],
+    stats: msg.stats ?? null,
+  };
+  const entry = msg.entry ?? {};
+  const lines = [
+    `包: ${msg.zip}`,
+    `条目: ${entry.name ?? '?'} · ${entry.method ?? '?'} · ${formatBytes(entry.compressedSize ?? 0)} → ${formatBytes(
+      entry.uncompressedSize ?? 0,
+    )}`,
+    `目录: ${state.zip.entries} 项${state.zip.zip64 ? ' · ZIP64' : ''}`,
+    "读取: 中央目录定位，按需 DecompressionStream('deflate-raw') 解压；解压结果只保留 8 MiB 窗口，不落盘。",
+  ];
+  if (state.zip.skipped.length > 0) {
+    const names = state.zip.skipped.slice(0, 4).map((s) => `${s.entry}（${s.reason}）`).join('、');
+    lines.push(`跳过: ${names}${state.zip.skipped.length > 4 ? ' …' : ''}`);
+  }
+  ui.zipSummary.hidden = false;
+  ui.zipSummary.textContent = lines.join('\n');
+  ui.zipSummary.dataset.tone = 'ok';
+  appendLine(`zip: 使用条目 ${entry.name ?? '?'}（${entry.method ?? '?'}，${formatBytes(entry.uncompressedSize ?? 0)}）`, 'ok');
+  recordEvent('zip', { zip: msg.zip, entry, skipped: state.zip.skipped });
+}
+
+function renderZipStats(stats) {
+  if (!stats || !state.zip) return;
+  state.zip.stats = stats;
+  const decoded = formatBytes(stats.decodedBytes ?? 0);
+  const peak = formatBytes(stats.peakBufferedBytes ?? 0);
+  appendLine(
+    `zip: 已流式解压 ${decoded}（${stats.reads ?? 0} 次读，${stats.reopens ?? 0} 次回退重解，峰值缓冲 ${peak}）`,
+    'muted',
+  );
+  recordEvent('zip-stats', stats);
+}
+
+/** resetEraseChoice makes the tail decision an explicit act per image. */
+function resetEraseChoice() {
+  state.eraseConfirmed = false;
+  ui.eraseConfirm.checked = false;
 }
 
 async function planImage() {
@@ -378,6 +476,15 @@ function renderPlan(result) {
   state.dbDone = false;
   renderChecklist();
   updateButtons();
+  recordEvent('plan', {
+    ok: Boolean(result.ok),
+    image: result.image ?? null,
+    facts: result.facts ?? null,
+    loader: result.loader
+      ? { source: result.loader.source, chipCheck: result.loader.chipCheck, sha256: result.loader.sha256, length: result.loader.length }
+      : null,
+    error: result.error ?? null,
+  });
 }
 
 function imageSummaryLines(result) {
@@ -518,6 +625,13 @@ async function startWrite() {
   ui.ufLog.textContent = '';
   updateButtons();
   appendUf(`开始写入（${state.eraseMode}，${state.mode === 'mock' ? 'mock 设备' : '真实 WebUSB'}）`);
+  recordEvent('write-start', {
+    eraseMode: state.eraseMode,
+    mode: state.mode,
+    image: state.imageName || state.imageKind,
+    zip: state.zip ? { zip: state.zip.zip, entry: state.zip.entry?.name ?? null } : null,
+    facts: state.plan?.facts ?? null,
+  });
   try {
     await request({ type: 'uf-run', ...payload, opts });
   } catch (err) {
@@ -547,6 +661,7 @@ function appendUf(text) {
 
 function renderUfEvent(msg) {
   const payload = msg.payload ?? {};
+  recordEvent('uf-event', { kind: msg.kind, payload });
   if (msg.kind === 'event') {
     const level = payload.level === 'warn' ? 'warn' : payload.level === 'error' ? 'error' : 'info';
     appendUf(`${level === 'info' ? '·' : level === 'warn' ? '!' : '✗'} ${payload.message}`);
@@ -592,6 +707,14 @@ function renderUfResult(result) {
     state.dbDone = true;
     appendLine('写入完成。设备复位后会重新枚举为 LOADER；点“授权设备”后 ld 可复查。', 'ok');
   }
+  recordEvent('uf-result', {
+    ok: run.ok,
+    bytesWritten: run.bytesWritten,
+    bytesErased: run.bytesErased,
+    durationMs: run.durationMs,
+    reset: run.reset,
+    error: run.error ? { codeName: run.error.codeName, code: run.error.code, phase: run.error.phase, item: run.error.item } : null,
+  });
   updateButtons();
   renderChecklist();
   runLine('ld');
@@ -617,6 +740,7 @@ function appendLine(text, tone = '') {
   ui.terminal.appendChild(node);
   ui.terminal.appendChild(document.createTextNode('\n'));
   ui.terminal.scrollTop = ui.terminal.scrollHeight;
+  recordEvent('line', { tone, text });
 }
 
 function appendError(message) {
@@ -624,6 +748,60 @@ function appendError(message) {
   appendLine(`✗ ${text}`, 'error');
   state.errors.push(text);
   renderErrors();
+  recordEvent('error', { message: text });
+}
+
+// ---------------------------------------------------------------------------
+// NDJSON log export
+//
+// The page is the only place that sees every event: shell lines, uf progress,
+// USB transfers, pre-flight verdicts, zip statistics. A write that fails on a
+// user's desk is only diagnosable if those leave the browser, so each one is
+// also recorded here and exported as NDJSON — the same shape `uf --log` writes
+// on the CLI side.
+// ---------------------------------------------------------------------------
+
+function recordEvent(type, payload = {}) {
+  state.events.push({ ts: new Date().toISOString(), type, ...payload });
+  if (state.events.length > MAX_EVENTS) {
+    const drop = state.events.length - MAX_EVENTS;
+    state.events.splice(0, drop);
+    state.eventsDropped += drop;
+  }
+}
+
+function exportLog() {
+  const header = {
+    ts: new Date().toISOString(),
+    type: 'header',
+    app: 'rk3588-webflasher',
+    page: location.href,
+    userAgent: navigator.userAgent,
+    coreVersion: state.coreVersion || null,
+    mode: state.mode,
+    image: state.imageName || null,
+    imageKind: state.imageKind || null,
+    zip: state.zip ? { zip: state.zip.zip, entry: state.zip.entry?.name ?? null, stats: state.zip.stats } : null,
+    plan: state.plan
+      ? { ok: state.plan.ok, image: state.plan.image ?? null, facts: state.plan.facts ?? null, error: state.plan.error ?? null }
+      : null,
+    device: state.deviceState ? { mode: state.deviceState.mode, current: state.deviceState.current } : null,
+    eventsDropped: state.eventsDropped,
+  };
+  const lines = [JSON.stringify(header), ...state.events.map((event) => JSON.stringify(event))];
+  if (state.eventsDropped > 0) {
+    lines.push(JSON.stringify({ ts: new Date().toISOString(), type: 'truncated', dropped: state.eventsDropped }));
+  }
+  const blob = new Blob([`${lines.join('\n')}\n`], { type: 'application/x-ndjson' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `rk3588-webflasher-${new Date().toISOString().replace(/[:.]/g, '-')}.ndjson`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  appendLine(`已导出 ${lines.length} 条 NDJSON 日志（含 zip 统计与传输记录）`, 'ok');
 }
 
 function renderErrors() {
@@ -729,7 +907,9 @@ function renderResult(result) {
     if (result.state.mode === 'LOADER') state.dbDone = true;
     if (previousMode === 'MASKROM' && result.state.mode === 'LOADER') {
       appendLine('设备已重新枚举为 LOADER：db 完成。', 'ok');
+      clearReconnect('db-complete');
     }
+    recordEvent('state', { mode: result.state.mode, current: result.state.current, loaderLoaded: result.state.loaderLoaded });
     renderState(result.state);
     renderDevices(result.state);
   }
@@ -779,6 +959,7 @@ function renderState(st) {
     note.className = 'state-note';
     note.textContent = 'Download Boot 已发出：等待设备重新枚举为 LOADER。若浏览器撤销了授权，再点一次“授权设备”。';
     ui.state.appendChild(note);
+    markReconnect('db');
   }
   updateButtons();
 }
@@ -864,6 +1045,7 @@ function formatBytes(n) {
 
 function renderTransfers(transfers) {
   for (const t of transfers) {
+    recordEvent('transfer', t);
     const row = document.createElement('tr');
     if (t.status && t.status !== 'ok') row.className = 'error';
     const cells = [
@@ -940,6 +1122,9 @@ function toggleMock(enabled) {
   state.loaderOverride = null;
   state.plan = null;
   state.dbDone = false;
+  state.zip = null;
+  clearReconnect('mode-switch');
+  renderZip();
   ui.fileLabel.textContent = '改用本地 loader…（可选）';
   ui.loaderSummary.textContent = '尚未生成计划。';
   renderChecklist();
@@ -958,6 +1143,153 @@ function clearOutput() {
   state.traceRows = 0;
   renderErrors();
   ui.traceCount.textContent = '0 条';
+}
+
+// ---------------------------------------------------------------------------
+// Device reconnect wizard
+//
+// The maskrom → LOADER transition is a re-enumeration: the browser drops the
+// per-instance permission, so `ld` fails until the user picks the device again.
+// The same happens after an unplug mid-write. Both cases get the same three
+// steps instead of an unexplained "no device" line.
+// ---------------------------------------------------------------------------
+
+function markReconnect(cause) {
+  const wasNeeded = state.reconnect.needed;
+  state.reconnect.needed = true;
+  state.reconnect.cause = cause;
+  state.reconnect.since = new Date().toISOString();
+  if (!wasNeeded) {
+    state.reconnect.attempts += 1;
+    recordEvent('reconnect-needed', { cause });
+  }
+  renderReconnect();
+}
+
+function clearReconnect(reason) {
+  if (!state.reconnect.needed) return;
+  state.reconnect.needed = false;
+  state.reconnect.cause = '';
+  recordEvent('reconnect-cleared', { reason });
+  renderReconnect();
+}
+
+function renderReconnect() {
+  const r = state.reconnect;
+  ui.reconnect.hidden = !r.needed;
+  if (!r.needed) {
+    ui.reconnectSteps.replaceChildren();
+    return;
+  }
+  const cause =
+    r.cause === 'db'
+      ? 'Download Boot 已发出：设备正在从 maskrom 重新枚举为 LOADER（bcdUSB bit0=1）。'
+      : r.cause === 'unplug'
+        ? '设备离开了总线：拔线、复位或供电掉电都会这样。'
+        : r.cause === 'error'
+          ? '写入中止后设备状态未知：可能停在 LOADER，也可能回到 maskrom。'
+          : '设备不再响应：重新授权前先确认线材与供电。';
+  const steps = [
+    cause,
+    '点“重新授权”，在浏览器弹窗里重新选择 0x2207 设备（重新枚举会撤销上一次的实例授权）。',
+    '授权后页面自动 ld；状态徽章变成 Loader 且只读命令可用，再继续写入或 info。',
+  ];
+  if (r.attempts >= 3) {
+    steps.push('已经重连 3 次以上：检查 USB 线与供电，Linux 上确认 udev 规则（见 docs/webusb-drivers.md），Windows 上确认设备驱动是 WinUSB。');
+  }
+  ui.reconnectSteps.replaceChildren(
+    ...steps.map((text, index) => {
+      const li = document.createElement('li');
+      li.textContent = text;
+      if (index === 0) li.className = 'reconnect-cause';
+      return li;
+    }),
+  );
+  ui.reconnectAuth.disabled = state.mode === 'mock' || !globalThis.navigator?.usb;
+}
+
+// ---------------------------------------------------------------------------
+// Install prompt (PWA)
+// ---------------------------------------------------------------------------
+
+function renderInstall() {
+  const available = Boolean(state.install.event) && !state.install.installed;
+  ui.install.hidden = !available;
+  if (available) {
+    ui.installNote.textContent = '安装后从桌面/开始菜单打开，断网也能载入页面与 wasm（安装本身不授予设备权限）。';
+    return;
+  }
+  if (state.install.installed) {
+    ui.installNote.textContent = '已作为应用安装。断网可打开页面；写入仍然需要 WebUSB 与设备授权。';
+    return;
+  }
+  ui.installNote.textContent =
+    '若地址栏没有安装图标：Chrome/Edge 菜单 →「安装 RK3588 WebFlasher…」；Safari/Firefox 无法安装为应用，也不支持 WebUSB。';
+}
+
+async function promptInstall() {
+  const event = state.install.event;
+  if (!event) return;
+  try {
+    event.prompt();
+    const choice = await event.userChoice;
+    recordEvent('install-prompt', { outcome: choice?.outcome ?? 'unknown' });
+  } catch (err) {
+    appendError(`安装失败：${err.message}`);
+  } finally {
+    state.install.event = null;
+    renderInstall();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Service worker: offline cache
+// ---------------------------------------------------------------------------
+
+async function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) {
+    ui.swNote.textContent = '离线缓存不可用：这个浏览器没有 service worker。';
+    return;
+  }
+  try {
+    const registration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+    state.sw.registration = registration;
+    registration.addEventListener('updatefound', () => {
+      const worker = registration.installing;
+      if (!worker) return;
+      worker.addEventListener('statechange', () => {
+        if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+          state.sw.updateReady = true;
+          renderSwNote();
+          setBanner('新版本已存入离线缓存：点“刷新页面”后生效。', 'info');
+        }
+      });
+    });
+    navigator.serviceWorker.addEventListener('controllerchange', renderSwNote);
+    renderSwNote();
+  } catch (err) {
+    ui.swNote.textContent = `service worker 注册失败：${err.message}`;
+    recordEvent('sw-error', { message: err.message });
+  }
+}
+
+function renderSwNote() {
+  const controlled = Boolean(navigator.serviceWorker?.controller);
+  const parts = [controlled ? '离线缓存已接管本页' : '离线缓存注册中（首次加载完成后接管）'];
+  if (state.sw.updateReady) parts.push('有新版本待刷新');
+  ui.swNote.textContent = `离线：${parts.join(' · ')}`;
+  ui.swNote.dataset.tone = controlled ? 'ok' : 'warn';
+  ui.reloadApp.hidden = !state.sw.updateReady;
+}
+
+function renderNetwork() {
+  const online = navigator.onLine !== false;
+  ui.netBadge.dataset.net = online ? 'online' : 'offline';
+  ui.netBadge.textContent = online ? '在线' : '离线（缓存可用）';
+  if (!online) {
+    appendLine('网络已断开：页面、wasm 与样式来自 service worker 缓存，写入仍然可用。', 'muted');
+  }
+  recordEvent('network', { online });
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,6 +1332,14 @@ function wireEvents() {
     updateButtons();
   });
   $('btn-clear').addEventListener('click', clearOutput);
+  ui.exportLog.addEventListener('click', exportLog);
+  ui.install.addEventListener('click', promptInstall);
+  ui.reconnectAuth.addEventListener('click', async () => {
+    await authorize();
+    renderReconnect();
+  });
+  ui.reconnectDismiss.addEventListener('click', () => clearReconnect('dismissed'));
+  ui.reloadApp.addEventListener('click', () => location.reload());
   ui.fileImage.addEventListener('change', (event) => pickImage(event.target.files?.[0] ?? null));
   ui.fileLoader.addEventListener('change', (event) => pickLoader(event.target.files?.[0] ?? null));
   ui.mock.addEventListener('change', (event) => toggleMock(event.target.checked));
@@ -1017,18 +1357,40 @@ function wireEvents() {
   navigator.usb?.addEventListener('connect', () => {
     if (state.mode !== 'usb') return;
     appendLine('USB connect：刷新设备列表。', 'muted');
+    clearReconnect('device-connected');
     runLine('ld');
   });
   navigator.usb?.addEventListener('disconnect', () => {
     if (state.mode !== 'usb') return;
     appendLine('USB disconnect：设备离开总线。', 'muted');
     state.dbDone = false;
+    markReconnect(state.ufRunning ? 'error' : 'unplug');
     runLine('ld');
   });
+
+  globalThis.addEventListener?.('beforeinstallprompt', (event) => {
+    event.preventDefault();
+    state.install.event = event;
+    renderInstall();
+    recordEvent('install-available', {});
+  });
+  globalThis.addEventListener?.('appinstalled', () => {
+    state.install.installed = true;
+    state.install.event = null;
+    renderInstall();
+    appendLine('已安装为应用：可以从桌面/开始菜单离线打开。', 'ok');
+    recordEvent('installed', {});
+  });
+  globalThis.addEventListener?.('online', renderNetwork);
+  globalThis.addEventListener?.('offline', renderNetwork);
 }
 
 async function main() {
   checkSupport();
+  renderNetwork();
+  renderInstall();
+  renderReconnect();
+  registerServiceWorker();
   wireEvents();
   renderChecklist();
   updateButtons();

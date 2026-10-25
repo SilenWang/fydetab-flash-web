@@ -1,0 +1,30 @@
+# Rockchip rockusb devices for WebUSB (Chrome / Edge / Chromium).
+#
+# Install:
+#   sudo install -m 0644 docs/99-rockchip-webusb.rules /etc/udev/rules.d/99-rockchip-webusb.rules
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --subsystem-match=usb --attr-match=idVendor=2207
+#
+# Then unplug/replug the board and check `ls -l /dev/bus/usb/<bus>/<dev>`: the
+# node must be readable and writable by your user (TAG+="uaccess") or by the
+# plugdev group (MODE/GROUP lines below).
+#
+# Why a rule at all: WebUSB needs permission to claim the interface, and
+# /dev/bus/usb/* is root:root 0664 by default. Chrome running as your user gets
+# EACCES on open() and reports the device as "Unable to open" in
+# chrome://device-log. The rule only changes permissions; it starts no service
+# and installs no driver.
+
+# Preferred: systemd-logind grants access to the locally logged-in user and
+# revokes it when the session ends (works without adding yourself to a group).
+SUBSYSTEM=="usb", ATTR{idVendor}=="2207", TAG+="uaccess", MODE="0660"
+
+# Fallback for systems without logind (or when you want a group instead of
+# per-session access): uncomment and add yourself to plugdev.
+# SUBSYSTEM=="usb", ATTR{idVendor}=="2207", GROUP="plugdev", MODE="0660"
+
+# Some kernels bind usb-storage to the LOADER-mode device before Chrome can
+# claim it. Opting out of that driver keeps the interface free for WebUSB.
+# Use this only if `lsusb -t` shows usb-storage on the 2207 device.
+# SUBSYSTEM=="usb", ATTR{idVendor}=="2207", ATTR{bInterfaceClass}=="08", ENV{ID_USB_DRIVER}=="usb-storage", ENV{ID_USB_DRIVER}=""
+# SUBSYSTEM=="usb", ATTR{idVendor}=="2207", ATTR{bInterfaceClass}=="08", ENV{UDISKS_IGNORE}="1"
