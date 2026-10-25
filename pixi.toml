@@ -14,6 +14,9 @@ dev = { cmd = "node tools/serve.mjs web/probe 5173", depends-on = ["gen"] }
 build = { cmd = "go run ./cmd/genprotocol -check && go build ./... && go vet ./... && node --check web/probe/protocol.js && node --check web/probe/rockusb.js && node --check web/probe/probe.js && node --check tools/serve.mjs", depends-on = ["gen"] }
 test = "go test ./... && node --test web/probe/rockusb.test.mjs web/probe/probe.test.mjs"
 fmt = "go fmt ./..."
+# M2: offline image plan, e.g. `pixi run uf --dry-run update.img`. Never opens
+# a USB device and never writes flash.
+uf = "go run ./cmd/uf"
 
 [dependencies]
 go = ">=1.22"
