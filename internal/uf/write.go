@@ -83,8 +83,8 @@ const (
 //	       and DEVICE_RESET
 //	15     opcode
 //	16     ucReserved: RWMETHOD_IMAGE (write) / RST_NONE_SUBCODE (reset)
-//	17..20 dwAddress: start LBA
-//	22..23 usLength: sector count
+//	17..20 dwAddress: start LBA, big-endian
+//	22..23 usLength: sector count, big-endian
 //
 // ERASE_LBA carries dwAddress/usLength but no data stage, so its transfer
 // length stays zero.
@@ -141,8 +141,11 @@ func EncodeCommandCBW(tag uint32, op Op, lba uint32, sectors uint16, dataLength 
 		return nil, fmt.Errorf("uf: opcode 0x%02X is not part of the write path", uint8(op))
 	}
 
-	binary.LittleEndian.PutUint32(b[17:21], lba)
-	binary.LittleEndian.PutUint16(b[22:24], sectors)
+	// dwAddress and usLength are big-endian on the wire; the transfer length
+	// at b[8:12] stays little-endian. The loader answers CSW phase error (and
+	// zero data) when either field is byte-swapped (SIL-515).
+	binary.BigEndian.PutUint32(b[17:21], lba)
+	binary.BigEndian.PutUint16(b[22:24], sectors)
 	b[15] = byte(op) // cbwcb.ucOperCode
 	return b, nil
 }

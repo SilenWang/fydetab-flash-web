@@ -33,7 +33,7 @@ func (c *corruptReads) ControlOut(requestType, request, value, index uint16, dat
 func (c *corruptReads) BulkOut(endpoint uint8, data []byte) (int, error) {
 	if len(data) == rockusb.CBWLength && binary.LittleEndian.Uint32(data[0:4]) == rockusb.CBWSignature {
 		op := Op(data[15])
-		lba := binary.LittleEndian.Uint32(data[17:21])
+		lba := binary.BigEndian.Uint32(data[17:21])
 		// Only the read back of the target LBA is corrupted: the IDB probe must
 		// still work, otherwise the run stops earlier for another reason.
 		c.armed = op == OpReadLBA && lba == c.lba && lba != IDBDefaultLBA
@@ -271,5 +271,157 @@ func TestPlanWithoutParameterGeometryIsRejected(t *testing.T) {
 	plan.GPT.Partitions = nil
 	if err := plan.Validate(); err == nil || !strings.Contains(err.Error(), "no partitions") {
 		t.Fatalf("Validate = %v, want a missing-partitions error", err)
+	}
+}
+
+// erasedBackupReads makes the backup-GPT read back as an erased region, which
+// is what the Fydetab Duo's loader does after accepting a write there.
+type erasedBackupReads struct {
+	inner rockusb.Transport
+	lba   uint32
+	armed bool
+}
+
+func (e *erasedBackupReads) ControlOut(requestType, request, value, index uint16, data []byte) (int, error) {
+	return e.inner.ControlOut(requestType, request, value, index, data)
+}
+
+func (e *erasedBackupReads) BulkOut(endpoint uint8, data []byte) (int, error) {
+	if len(data) == rockusb.CBWLength && binary.LittleEndian.Uint32(data[0:4]) == rockusb.CBWSignature {
+		e.armed = Op(data[15]) == OpReadLBA && binary.BigEndian.Uint32(data[17:21]) == e.lba
+	}
+	return e.inner.BulkOut(endpoint, data)
+}
+
+func (e *erasedBackupReads) BulkIn(endpoint uint8, length int) ([]byte, error) {
+	b, err := e.inner.BulkIn(endpoint, length)
+	if err == nil && e.armed && length != rockusb.CSWLength {
+		b = bytes.Repeat([]byte{0xCC}, length)
+		e.armed = false
+	}
+	return b, err
+}
+
+func (e *erasedBackupReads) Reset() error { return e.inner.Reset() }
+
+type erasedBackupConnector struct {
+	inner Connector
+	lba   uint32
+}
+
+func (c erasedBackupConnector) Open(ctx context.Context) (rockusb.Transport, rockusb.Link, error) {
+	tr, link, err := c.inner.Open(ctx)
+	if err != nil {
+		return tr, link, err
+	}
+	return &erasedBackupReads{inner: tr, lba: c.lba}, link, nil
+}
+
+func (c erasedBackupConnector) Close() error { return c.inner.Close() }
+
+// SIL-515: the loader accepts the backup-GPT write, reports success and leaves
+// the region erased. The primary table is verified, so the run should warn and
+// continue instead of aborting before any payload item is written.
+func TestRunTreatsErasedBackupGPTAsWarning(t *testing.T) {
+	layout := newTestLayout(t)
+	plan := layout.plan(t)
+	lay, err := gpt.Build(plan.GPT.Partitions, plan.DiskSectors)
+	if err != nil {
+		t.Fatalf("build layout: %v", err)
+	}
+	want, err := gpt.Encode(lay, gpt.EncodeOptions{Seed: gptSeed(plan.GPT.Partitions)})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	conn := erasedBackupConnector{inner: NewSimConnector(testSimConfig(plan)), lba: uint32(want.BackupLBA)}
+	rep, err := runPlan(t, plan, layout, conn, gptOptions())
+	if err != nil {
+		t.Fatalf("run must continue past an unwritable backup GPT: %v (report %+v)", err, rep)
+	}
+	if rep.GPT == nil || !rep.GPT.BackupUnverified {
+		t.Fatalf("backupUnverified not reported: %+v", rep.GPT)
+	}
+	if !rep.GPT.Verified || !rep.GPT.BackupVerified {
+		// BackupVerified is false because the region stayed erased; Verified
+		// must still be true (primary matched).
+		if !rep.GPT.Verified {
+			t.Fatalf("primary GPT was not verified: %+v", rep.GPT)
+		}
+	}
+	if len(rep.Warnings) == 0 {
+		t.Fatal("expected a warning about the unwritable backup GPT region")
+	}
+}
+
+// A mismatching backup read back with real (not erased) data is still fatal.
+func TestRunFailsWhenBackupGPTReadsWrongData(t *testing.T) {
+	layout := newTestLayout(t)
+	plan := layout.plan(t)
+	lay, err := gpt.Build(plan.GPT.Partitions, plan.DiskSectors)
+	if err != nil {
+		t.Fatalf("build layout: %v", err)
+	}
+	want, err := gpt.Encode(lay, gpt.EncodeOptions{Seed: gptSeed(plan.GPT.Partitions)})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	conn := corruptConnector{inner: NewSimConnector(testSimConfig(plan)), lba: uint32(want.BackupLBA)}
+	if _, err := runPlan(t, plan, layout, conn, gptOptions()); err == nil {
+		t.Fatal("expected ERR_READBACK for a backup region holding wrong data")
+	}
+}
+
+// SIL-515: the loader's READ_LBA window ends at 32 MiB; writes above it work
+// (a v23 install written there boots), but reads return the erase fill. A run
+// must not treat that as a failed write: it skips the comparison with a
+// warning and keeps writing.
+func TestRunSkipsReadbackOutsideLoaderReadWindow(t *testing.T) {
+	layout := newTestLayout(t)
+	plan := layout.plan(t)
+	conn := NewSimConnector(testSimConfig(plan))
+	opts := gptOptions()
+	opts.ReadLimitSectors = 0x2000 // fixture: IDB (64) readable, items/GPT backup outside
+
+	rep, err := runPlan(t, plan, layout, conn, opts)
+	if err != nil {
+		t.Fatalf("run must not fail on the loader read window: %v (report %+v)", err, rep)
+	}
+	// The writes still happened: the fixture's state item is on the flash.
+	got, err := conn.FlashAt(0x8000, int(layout.stateBytes))
+	if err != nil {
+		t.Fatalf("read state item: %v", err)
+	}
+	want := layout.source[layout.stateOff : layout.stateOff+int64(layout.stateBytes)]
+	if !bytes.Equal(got, want) {
+		t.Fatal("state item was not written")
+	}
+	if !rep.GPT.BackupUnverified {
+		t.Fatalf("backup GPT should be reported unverified outside the read window: %+v", rep.GPT)
+	}
+	joined := strings.Join(rep.Warnings, "\n")
+	if !strings.Contains(joined, "READ_LBA") {
+		t.Fatalf("missing read-window warning, got:\n%s", joined)
+	}
+}
+
+func TestReadableSectorsWindow(t *testing.T) {
+	r := &runner{opts: Options{ReadLimitSectors: 0x10000}}
+	cases := []struct {
+		lba     uint64
+		sectors int
+		want    int
+		clipped bool
+	}{
+		{0, 8, 8, false},
+		{0xFFF8, 8, 8, false},
+		{0x10000, 8, 0, false},
+		{0x10000 + 5, 8, 0, false},
+		{0xFFFC, 8, 4, true},
+	}
+	for _, c := range cases {
+		got, clipped := r.readableSectors(c.lba, c.sectors)
+		if got != c.want || clipped != c.clipped {
+			t.Fatalf("readableSectors(0x%x, %d) = %d, %v; want %d, %v", c.lba, c.sectors, got, clipped, c.want, c.clipped)
+		}
 	}
 }

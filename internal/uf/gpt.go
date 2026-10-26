@@ -32,8 +32,17 @@ type GPTReport struct {
 	DiskSectors uint64 `json:"diskSectors"`
 	// Entries is how many partitions the table describes.
 	Entries int `json:"entries"`
-	// Verified reports that both regions were read back and matched.
+	// Verified reports that the primary region was read back and matched.
 	Verified bool `json:"verified"`
+	// BackupVerified reports the backup region read back and matched.
+	BackupVerified bool `json:"backupVerified"`
+	// BackupUnverified is set when the backup region lies outside the loader's
+	// reliable READ_LBA window (or still reads erased), so its write cannot be
+	// checked. SIL-515: reads at or above 32 MiB return 0xCC while writes there
+	// work (a v23 install written above 32 MiB boots), so an unverifiable
+	// backup is a warning, not an abort. The primary table is verified and is
+	// what U-Boot reads.
+	BackupUnverified bool `json:"backupUnverified,omitempty"`
 	// Rebuilt marks a table built with the device's flash size where the plan
 	// used a different (derived) one.
 	Rebuilt bool `json:"rebuilt,omitempty"`
@@ -139,9 +148,12 @@ func (r *runner) writeGPT(ctx context.Context) (int64, error) {
 	if err := r.readBackCompare(PhaseIDB, "", img.PrimaryLBA, img.Primary, "主 GPT（LBA 0）"); err != nil {
 		return 0, err
 	}
-	if err := r.readBackCompare(PhaseIDB, "", img.BackupLBA, img.Backup, fmt.Sprintf("备份 GPT（LBA 0x%x）", img.BackupLBA)); err != nil {
+	backupVerified, err := r.verifyBackupGPT(img.BackupLBA, img.Backup, fmt.Sprintf("备份 GPT（LBA 0x%x）", img.BackupLBA))
+	if err != nil {
 		return 0, err
 	}
+	rep.BackupVerified = backupVerified
+	rep.BackupUnverified = !backupVerified && !r.opts.SkipReadback
 	if r.opts.SkipReadback {
 		verified = false
 	}
@@ -281,7 +293,24 @@ func (r *runner) readBackCompare(phase, item string, lba uint64, want []byte, la
 	if r.opts.SkipReadback {
 		return nil
 	}
-	got, err := r.dev.read.ReadLBAs(uint32(lba), len(want)/SectorSize)
+	n, clipped := r.readableSectors(lba, len(want)/SectorSize)
+	if n == 0 {
+		warning := fmt.Sprintf(
+			"%s（LBA 0x%x）在设备 READ_LBA 窗口（前 32 MiB）之外：写入已执行，跳过读回校验",
+			label, lba)
+		r.rep.Warnings = append(r.rep.Warnings, warning)
+		r.event(phase, "warn", item, warning)
+		return nil
+	}
+	if clipped {
+		warning := fmt.Sprintf(
+			"%s（LBA 0x%x）跨过设备 READ_LBA 窗口（前 32 MiB）：只校验窗口内 %d 字节",
+			label, lba, n*SectorSize)
+		r.rep.Warnings = append(r.rep.Warnings, warning)
+		r.event(phase, "warn", item, warning)
+		want = want[:n*SectorSize]
+	}
+	got, err := r.dev.read.ReadLBAs(uint32(lba), n)
 	if err != nil {
 		if CodeOf(err) == rockusb.ErrDeviceNotSupport {
 			r.event(phase, "warn", item, "设备不支持 READ_LBA，跳过写后读回校验")
@@ -297,6 +326,89 @@ func (r *runner) readBackCompare(phase, item string, lba uint64, want []byte, la
 	}
 	r.event(phase, "info", item, "读回校验 ok："+label)
 	return nil
+}
+
+// verifyBackupGPT reads the backup table back. A mismatch is fatal unless the
+// region still reads as uniformly erased or lies outside the loader's readable
+// window: some loaders accept a write to the last sectors, report success and
+// leave the region erased, and return the erase fill for reads there. The
+// primary table has already been verified and U-Boot boots from it, so an
+// absent or unverifiable backup table is reported as a warning instead of
+// failing the whole run.
+func (r *runner) verifyBackupGPT(lba uint64, want []byte, label string) (bool, error) {
+	if r.opts.SkipReadback {
+		return false, nil
+	}
+	if n, _ := r.readableSectors(lba, len(want)/SectorSize); n == 0 {
+		warning := fmt.Sprintf(
+			"%s 在设备 READ_LBA 窗口（前 32 MiB）之外：写入已执行，无法读回校验；主 GPT 已校验，启动读主表",
+			label)
+		r.rep.Warnings = append(r.rep.Warnings, warning)
+		r.event(PhaseIDB, "warn", "", warning)
+		return false, nil
+	}
+	got, err := r.dev.read.ReadLBAs(uint32(lba), len(want)/SectorSize)
+	if err != nil {
+		if CodeOf(err) == rockusb.ErrDeviceNotSupport {
+			r.event(PhaseIDB, "warn", "", "设备不支持 READ_LBA，跳过写后读回校验")
+			return false, nil
+		}
+		return false, r.fail(PhaseIDB, "", CodeOf(err), fmt.Sprintf("读回 %s 失败: %v", label, err),
+			"读回失败时不要继续写。", err)
+	}
+	if bytes.Equal(got, want) {
+		r.event(PhaseIDB, "info", "", "读回校验 ok："+label)
+		return true, nil
+	}
+	if pattern, ok := erasedPattern(got); ok {
+		warning := fmt.Sprintf(
+			"%s 读回仍是擦除态（%s）：该区域无法读回校验；主 GPT 已校验，启动读主表",
+			label, pattern)
+		r.rep.Warnings = append(r.rep.Warnings, warning)
+		r.event(PhaseIDB, "warn", "", warning)
+		return false, nil
+	}
+	return false, r.fail(PhaseIDB, "", ErrReadback, fmt.Sprintf(
+		"读回校验失败 %s（LBA 0x%x，首处不一致 offset %d）", label, lba, firstDiff(got, want)),
+		"停止写入；设备内容与计划不一致，先保留日志再排查。", nil)
+}
+
+// readableSectors limits a readback span to the loader's reliable READ_LBA
+// window. It returns the number of sectors that can be compared and whether the
+// span had to be clipped; zero means the whole span is outside the window.
+func (r *runner) readableSectors(lba uint64, sectors int) (int, bool) {
+	limit := r.opts.ReadLimitSectors
+	if limit == 0 {
+		limit = DefaultReadLimitSectors
+	}
+	if lba >= limit {
+		return 0, false
+	}
+	if lba+uint64(sectors) > limit {
+		return int(limit - lba), true
+	}
+	return sectors, false
+}
+
+// erasedPattern reports whether every byte is the same erase fill value
+// (0xCC or 0xFF, the two patterns Rockchip loaders leave) and names it. A
+// uniform zero buffer is deliberately not accepted: that is what a broken read
+// returns, not what an erased flash sector contains.
+func erasedPattern(b []byte) (string, bool) {
+	if len(b) == 0 {
+		return "", false
+	}
+	switch b[0] {
+	case 0xCC, 0xFF:
+	default:
+		return "", false
+	}
+	for _, v := range b {
+		if v != b[0] {
+			return "", false
+		}
+	}
+	return fmt.Sprintf("0x%02X", b[0]), true
 }
 
 func firstDiff(a, b []byte) int {

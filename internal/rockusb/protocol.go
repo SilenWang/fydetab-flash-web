@@ -40,6 +40,11 @@ const RockchipVendorID = 0x2207
 const (
 	StatusPassed byte = 0x00
 	StatusFailed byte = 0x01
+	// StatusPhaseError is the "phase error" answer the loader gives when the
+	// command fields do not match what it expects. SIL-515: accepting it as
+	// success hid a byte-swapped LBA field and zero-filled data. Treat it as a
+	// failure.
+	StatusPhaseError byte = 0x02
 )
 
 // ErrorCode mirrors rkdeveloptool's ERR_* values, so a probe trace can be
@@ -188,10 +193,16 @@ func IsReadOnly(op Op) bool {
 // EncodeReadLBACBW renders the CBW for READ_LBA: dwAddress is the first
 // 512-byte sector and usLength is the sector count. Unlike the info commands,
 // this one carries both fields and a bulk-IN data stage of sectors*512 bytes.
+//
+// dwAddress and usLength are big-endian, as the loader's CBW parser expects.
+// SIL-515: with little-endian fields the loader answered CSW phase error and
+// zero-filled data. The remaining fields, including the transfer length at
+// b[8:12], stay little-endian.
 func EncodeReadLBACBW(tag uint32, lba uint32, sectors uint16) []byte {
 	b := EncodeCBW(tag, OpReadLBA, uint32(sectors)*512)
-	binary.LittleEndian.PutUint32(b[17:21], lba)
-	binary.LittleEndian.PutUint16(b[22:24], sectors)
+	b[14] = 0x0a // READ_LBA carries a 10-byte CBWCB, not the 6-byte info form
+	binary.BigEndian.PutUint32(b[17:21], lba)
+	binary.BigEndian.PutUint16(b[22:24], sectors)
 	return b
 }
 
@@ -243,7 +254,7 @@ func (c CSW) Validate(tag uint32) ErrorCode {
 	if c.Signature != CSWSignature || c.Tag != tag {
 		return ErrCmdNotMatch
 	}
-	if c.Status == StatusFailed {
+	if c.Status != StatusPassed {
 		return ErrFailed
 	}
 	return ErrSuccess
