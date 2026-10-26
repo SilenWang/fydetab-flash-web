@@ -440,6 +440,7 @@ docs/webusb-drivers.md      macOS arm64 / Linux / Windows 的 WebUSB 与驱动�
 docs/99-rockchip-webusb.rules  Linux udev 规则
 docs/pwa-offline.md         安装、离线验证、zip 直读与日志导出
 docs/m4b-ui.md              五区块页面：下载/校验/设备/刷写/日志、CORS 与 2 分钟规则
+docs/quickstart.md          用户上手：安装、进 maskrom、刷写、救砖、日志导出
 ```
 
 ## 协议来源与许可
