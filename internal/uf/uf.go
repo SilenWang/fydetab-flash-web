@@ -152,6 +152,14 @@ type Options struct {
 	// SkipReadback disables the post-write first/last 4 KiB comparison.
 	// Mock/replay runs set it; a real write must not.
 	SkipReadback bool
+	// ReadLimitSectors is the first LBA the loader cannot read back. The
+	// Fydetab Duo's loader answers READ_LBA at or above 32 MiB (0x10000
+	// sectors) with the erase fill (0xCC) even though the flash holds the
+	// written data and writes there work (SIL-515: writes above 32 MiB boot;
+	// reads above it are 0xCC, including a fully bootable v23 install).
+	// Readback verification outside this window is skipped with a warning;
+	// zero means DefaultReadLimitSectors.
+	ReadLimitSectors uint64
 	// IDB overrides the IDB byte model. nil means NewRK28RC4Model().
 	IDB IDBModel
 	// RewriteIDB forces a rebuild of the IDB at LBA 64 even when the device
@@ -177,12 +185,19 @@ type Options struct {
 	Sleep func(time.Duration)
 }
 
+// DefaultReadLimitSectors is the loader's reliable READ_LBA window: 32 MiB.
+// Writes are not affected (SIL-515).
+const DefaultReadLimitSectors uint64 = 0x10000
+
 // normalize fills defaults and clamps the knobs, returning the warnings it had
 // to make visible.
 func (o Options) normalize() (Options, []string) {
 	var warnings []string
 	if o.Timeout <= 0 {
 		o.Timeout = DefaultTimeout
+	}
+	if o.ReadLimitSectors == 0 {
+		o.ReadLimitSectors = DefaultReadLimitSectors
 	}
 	if o.Retries < 0 {
 		o.Retries = 0

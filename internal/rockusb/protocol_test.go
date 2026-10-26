@@ -254,3 +254,45 @@ func TestCommandForUnknownOp(t *testing.T) {
 		t.Errorf("Name() = %q", got)
 	}
 }
+
+// SIL-515: the loader parses dwAddress/usLength big-endian and READ_LBA has a
+// 10-byte CBWCB. With little-endian fields the device answered CSW status 0x02
+// and zero-filled data, which looked like an empty IDB at LBA 64.
+func TestEncodeReadLBACBWMatchesLoaderWireFormat(t *testing.T) {
+	cbw := EncodeReadLBACBW(0x01020304, 64, 8)
+	if len(cbw) != CBWLength {
+		t.Fatalf("CBW is %d bytes, want %d", len(cbw), CBWLength)
+	}
+	if cbw[12] != DirectionIn {
+		t.Fatalf("flags = 0x%02X, want 0x%02X", cbw[12], DirectionIn)
+	}
+	if cbw[14] != 0x0a {
+		t.Fatalf("cbwcb length = 0x%02X, want 0x0a for READ_LBA", cbw[14])
+	}
+	if cbw[15] != byte(OpReadLBA) {
+		t.Fatalf("opcode = 0x%02X", cbw[15])
+	}
+	if got := binary.BigEndian.Uint32(cbw[17:21]); got != 64 {
+		t.Fatalf("dwAddress = 0x%x, want 0x40 (big-endian)", got)
+	}
+	if got := binary.BigEndian.Uint16(cbw[22:24]); got != 8 {
+		t.Fatalf("usLength = %d, want 8 (big-endian)", got)
+	}
+	if got := binary.LittleEndian.Uint32(cbw[8:12]); got != 8*512 {
+		t.Fatalf("transfer length = %d, want %d (little-endian)", got, 8*512)
+	}
+}
+
+func TestCSWPhaseErrorIsFailure(t *testing.T) {
+	b := make([]byte, CSWLength)
+	binary.LittleEndian.PutUint32(b[0:4], CSWSignature)
+	binary.LittleEndian.PutUint32(b[4:8], 9)
+	b[12] = StatusPhaseError
+	csw, err := DecodeCSW(b)
+	if err != nil {
+		t.Fatalf("DecodeCSW: %v", err)
+	}
+	if code := csw.Validate(9); code != ErrFailed {
+		t.Fatalf("Validate(phase error) = %v, want %v", code, ErrFailed)
+	}
+}

@@ -232,8 +232,8 @@ func (t *ReplayTransport) BulkOut(endpoint uint8, data []byte) (int, error) {
 	if len(data) == rockusb.CBWLength && binary.LittleEndian.Uint32(data[0:4]) == rockusb.CBWSignature {
 		kind = FrameCBW
 		op = data[15]
-		lba = binary.LittleEndian.Uint32(data[17:21])
-		sectors = binary.LittleEndian.Uint16(data[22:24])
+		lba = binary.BigEndian.Uint32(data[17:21])
+		sectors = binary.BigEndian.Uint16(data[22:24])
 		t.lastTag = binary.LittleEndian.Uint32(data[4:8])
 	}
 
@@ -611,8 +611,8 @@ func (s *Simulator) BulkOut(endpoint uint8, data []byte) (int, error) {
 			return 0, errStalled
 		}
 		op := Op(data[15])
-		lba := binary.LittleEndian.Uint32(data[17:21])
-		sectors := int(binary.LittleEndian.Uint16(data[22:24]))
+		lba := binary.BigEndian.Uint32(data[17:21])
+		sectors := int(binary.BigEndian.Uint16(data[22:24]))
 		s.lastTag = binary.LittleEndian.Uint32(data[4:8])
 		s.pending = &simCommand{op: op, lba: lba, sectors: sectors,
 			dataLen: int(binary.LittleEndian.Uint32(data[8:12])), tag: s.lastTag}

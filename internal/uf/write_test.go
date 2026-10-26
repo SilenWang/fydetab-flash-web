@@ -45,10 +45,10 @@ func TestEncodeCommandCBWWriteLBA(t *testing.T) {
 	if cbw[16] != methodImage {
 		t.Fatalf("subcode = 0x%02X, want RWMETHOD_IMAGE", cbw[16])
 	}
-	if got := le.Uint32(cbw[17:21]); got != 0x1234 {
+	if got := binary.BigEndian.Uint32(cbw[17:21]); got != 0x1234 {
 		t.Fatalf("address = 0x%x", got)
 	}
-	if got := le.Uint16(cbw[22:24]); got != 128 {
+	if got := binary.BigEndian.Uint16(cbw[22:24]); got != 128 {
 		t.Fatalf("usLength = %d", got)
 	}
 }
@@ -66,8 +66,8 @@ func TestEncodeCommandCBWEraseAndReset(t *testing.T) {
 	if erase[14] != 0x0a || erase[15] != byte(OpEraseLBA) {
 		t.Fatalf("erase cbwcb length/opcode = 0x%02X/0x%02X", erase[14], erase[15])
 	}
-	if le.Uint32(erase[17:21]) != 0x2000 || le.Uint16(erase[22:24]) != 16 {
-		t.Fatalf("erase address/length = 0x%x/%d", le.Uint32(erase[17:21]), le.Uint16(erase[22:24]))
+	if binary.BigEndian.Uint32(erase[17:21]) != 0x2000 || binary.BigEndian.Uint16(erase[22:24]) != 16 {
+		t.Fatalf("erase address/length = 0x%x/%d", binary.BigEndian.Uint32(erase[17:21]), binary.BigEndian.Uint16(erase[22:24]))
 	}
 
 	reset, err := EncodeCommandCBW(8, OpDeviceReset, 0, 0, 0, ResetSubcodeNone)
@@ -240,4 +240,29 @@ func asError(err error, target **Error) bool {
 		err = u.Unwrap()
 	}
 	return false
+}
+
+// SIL-515: READ_LBA on the write path uses the same big-endian address/length
+// and 10-byte CBWCB as WRITE_LBA; otherwise the loader returns phase error and
+// zero data, which made the IDB probe look empty and the readback fail.
+func TestEncodeCommandCBWReadLBAWireFormat(t *testing.T) {
+	cbw, err := EncodeCommandCBW(0x0A0B0C0D, OpReadLBA, 64, 8, 8*SectorSize, methodImage)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if cbw[12] != 0x80 {
+		t.Fatalf("flags = 0x%02X, want 0x80 (device to host)", cbw[12])
+	}
+	if cbw[14] != 0x0a || cbw[15] != byte(OpReadLBA) {
+		t.Fatalf("cbwcb length/opcode = 0x%02X/0x%02X", cbw[14], cbw[15])
+	}
+	if got := binary.BigEndian.Uint32(cbw[17:21]); got != 64 {
+		t.Fatalf("dwAddress = 0x%x, want 0x40", got)
+	}
+	if got := binary.BigEndian.Uint16(cbw[22:24]); got != 8 {
+		t.Fatalf("usLength = %d, want 8", got)
+	}
+	if got := binary.LittleEndian.Uint32(cbw[8:12]); got != 8*SectorSize {
+		t.Fatalf("transfer length = %d, want %d", got, 8*SectorSize)
+	}
 }

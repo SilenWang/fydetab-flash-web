@@ -1192,7 +1192,26 @@ func (r *runner) verifyRange(it Item, off, n int64) error {
 		return r.fail(PhaseWrite, it.Name, rockusb.ErrFailed,
 			fmt.Sprintf("读回校验时读取镜像 %s 失败: %v", it.Name, err), "确认镜像文件可读。", err)
 	}
-	got, err := r.dev.read.ReadLBAs(it.TargetLBA+uint32(off/SectorSize), int(n/SectorSize))
+	lba := it.TargetLBA + uint32(off/SectorSize)
+	have, clipped := r.readableSectors(uint64(lba), int(n/SectorSize))
+	if have == 0 {
+		warning := fmt.Sprintf(
+			"读回跳过 %s offset=%d（LBA 0x%x）：设备 READ_LBA 在 32 MiB 以上返回擦除态，写入已执行但无法校验",
+			it.Name, off, lba)
+		r.rep.Warnings = append(r.rep.Warnings, warning)
+		r.event(PhaseWrite, "warn", it.Name, warning)
+		return nil
+	}
+	if clipped {
+		warning := fmt.Sprintf(
+			"读回跳过 %s offset=%d 的窗口外部分：只校验前 %d 字节",
+			it.Name, off, have*SectorSize)
+		r.rep.Warnings = append(r.rep.Warnings, warning)
+		r.event(PhaseWrite, "warn", it.Name, warning)
+		n = int64(have) * int64(SectorSize)
+		want = want[:n]
+	}
+	got, err := r.dev.read.ReadLBAs(lba, int(n/SectorSize))
 	if err != nil {
 		if CodeOf(err) == rockusb.ErrDeviceNotSupport {
 			r.event(PhaseWrite, "warn", it.Name, "设备不支持 READ_LBA，跳过写后读回校验")
