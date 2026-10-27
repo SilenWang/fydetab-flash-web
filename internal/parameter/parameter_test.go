@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rkcrc"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkcrc"
 )
 
 // syntheticParameter is deliberately not a copy of any real vendor file: the

@@ -26,11 +26,11 @@ import (
 	"syscall/js"
 	"time"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/imageplan"
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
-	"github.com/SilenWang/rk3588-webflasher/internal/uf"
+	"github.com/SilenWang/fydetab-flash-web/internal/imageplan"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkfw"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/uf"
 )
 
 // --- image source -----------------------------------------------------------

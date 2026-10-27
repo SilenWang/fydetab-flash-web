@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
 )
 
 // GPT constants from the UEFI specification.

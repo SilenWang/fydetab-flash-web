@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
 )
 
 func part(name string, first, sectors uint64) parameter.Partition {

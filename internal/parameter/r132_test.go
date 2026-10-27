@@ -8,7 +8,7 @@ package parameter
 import (
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/testimage"
+	"github.com/SilenWang/fydetab-flash-web/internal/testimage"
 )
 
 // r132Partition is one mtdparts entry as written in the real parameter text.

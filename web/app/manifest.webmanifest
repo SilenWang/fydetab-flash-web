@@ -1,7 +1,7 @@
 {
-  "name": "RK3588 WebFlasher",
-  "short_name": "RK Flasher",
-  "description": "rockusb over WebUSB：RK3588 镜像计划、Download Boot 与 uf 写入。可离线安装，支持官方 .zip 直读。",
+  "name": "Fydetab WebFlasher",
+  "short_name": "Fydetab",
+  "description": "rockusb over WebUSB：Fydetab Duo（RK3588）镜像计划、Download Boot 与 uf 写入。可离线安装，支持官方 .zip 直读。",
   "id": "./",
   "start_url": "./",
   "scope": "./",

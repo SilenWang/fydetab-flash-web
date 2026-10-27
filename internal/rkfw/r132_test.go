@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/testimage"
+	"github.com/SilenWang/fydetab-flash-web/internal/testimage"
 )
 
 // r132ItemWant is one row of the r132 item table as measured on the image.

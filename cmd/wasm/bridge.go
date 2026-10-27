@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"syscall/js"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/device"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/device"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // jsBridge implements device.Bridge on top of the worker-side JavaScript

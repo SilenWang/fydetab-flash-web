@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	deviceapi "github.com/SilenWang/rk3588-webflasher/internal/device"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	deviceapi "github.com/SilenWang/fydetab-flash-web/internal/device"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // BridgeConnector binds the write state machine to the real transport.

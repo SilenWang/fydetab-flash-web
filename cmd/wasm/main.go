@@ -18,8 +18,8 @@ import (
 	"syscall/js"
 	"time"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/device"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/device"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 var (

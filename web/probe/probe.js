@@ -448,7 +448,7 @@ async function probeDevice(device) {
 
 function buildExport() {
   return {
-    schema: 'rk3588-webflasher/probe-trace@1',
+    schema: 'fydetab-flash-web/probe-trace@1',
     readOnly: true,
     probe: {
       version: PROBE_VERSION,

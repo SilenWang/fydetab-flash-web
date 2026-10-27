@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
-	"github.com/SilenWang/rk3588-webflasher/internal/testimage"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkfw"
+	"github.com/SilenWang/fydetab-flash-web/internal/testimage"
 )
 
 func v23Report(t *testing.T) *Report {

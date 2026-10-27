@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkfw"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // Where a Download Boot loader came from. The distinction is shown on the page

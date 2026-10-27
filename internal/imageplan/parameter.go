@@ -11,8 +11,8 @@ package imageplan
 import (
 	"fmt"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkfw"
 )
 
 // buildParameterPlan locates the PARM block in the image and lays out its

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/imageplan"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
-	"github.com/SilenWang/rk3588-webflasher/internal/uf"
+	"github.com/SilenWang/fydetab-flash-web/internal/imageplan"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkfw"
+	"github.com/SilenWang/fydetab-flash-web/internal/uf"
 )
 
 // buildRKFWImageWithChip rebuilds the RKFW fixture with a different chip field

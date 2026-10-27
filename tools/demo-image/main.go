@@ -14,7 +14,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/imageplan"
+	"github.com/SilenWang/fydetab-flash-web/internal/imageplan"
 )
 
 func main() {

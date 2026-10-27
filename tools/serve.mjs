@@ -69,7 +69,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`RK3588 webflasher: http://localhost:${port}/app/  (M0 probe: /probe/)`);
+  console.log(`Fydetab webflasher: http://localhost:${port}/app/  (M0 probe: /probe/)`);
   console.log(`serving ${root}`);
   console.log('Chrome/Edge only. Press Ctrl+C to stop.');
 });

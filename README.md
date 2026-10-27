@@ -1,4 +1,4 @@
-# rk3588-webflasher
+# fydetab-flash-web
 
 浏览器里复刻 Rockchip `upgrade_tool` 的刷机路径：协议与编排用 Go 编译成 WebAssembly，USB 走 WebUSB，完全本地运行。
 

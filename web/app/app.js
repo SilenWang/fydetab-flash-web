@@ -276,7 +276,7 @@ function stamp() {
 }
 
 function exportLogText() {
-  downloadBlob(`rk3588-webflasher-${stamp()}.log`, `${log.toText()}\n`, 'text/plain;charset=utf-8');
+  downloadBlob(`fydetab-flash-web-${stamp()}.log`, `${log.toText()}\n`, 'text/plain;charset=utf-8');
   log.info('log', `已导出文本日志（${log.size} 条）`);
 }
 
@@ -295,7 +295,7 @@ function exportLogNdjson() {
       ? { mode: state.deviceState.mode, current: state.deviceState.current, selected: state.selectedKey }
       : null,
   });
-  downloadBlob(`rk3588-webflasher-${stamp()}.ndjson`, text, 'application/x-ndjson');
+  downloadBlob(`fydetab-flash-web-${stamp()}.ndjson`, text, 'application/x-ndjson');
   log.info('log', `已导出 NDJSON 日志（${log.size} 条）`);
 }
 
@@ -1891,7 +1891,7 @@ function renderInstall() {
     return;
   }
   ui.installNote.textContent =
-    '若地址栏没有安装图标：Chrome/Edge 菜单 →「安装 RK3588 WebFlasher…」；Safari/Firefox 无法安装为应用，也不支持 WebUSB。';
+    '若地址栏没有安装图标：Chrome/Edge 菜单 →「安装 Fydetab WebFlasher…」；Safari/Firefox 无法安装为应用，也不支持 WebUSB。';
 }
 
 async function promptInstall() {

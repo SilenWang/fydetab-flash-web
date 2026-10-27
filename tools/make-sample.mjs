@@ -44,7 +44,7 @@ const zip = writeZip(
     { name: 'MiniLoaderAll.bin', data: loader, method: DEFLATE },
     { name: 'Image/update.img', data: image, method: DEFLATE },
   ],
-  { forceZip64: true, comment: 'rk3588-webflasher demo package' },
+  { forceZip64: true, comment: 'fydetab-flash-web demo package' },
 );
 writeFileSync(zipPath, zip);
 

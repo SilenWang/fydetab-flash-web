@@ -1,5 +1,5 @@
 {
-  "schema": "rk3588-webflasher/trace@1",
+  "schema": "fydetab-flash-web/trace@1",
   "readOnly": true,
   "exportedAt": "2026-10-25T04:04:45.775Z",
   "probe": {

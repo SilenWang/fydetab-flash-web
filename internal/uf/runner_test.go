@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 func runPlan(t *testing.T, plan *Plan, layout *testLayout, conn Connector, opts Options) (*Report, error) {

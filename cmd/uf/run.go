@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/imageplan"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
-	"github.com/SilenWang/rk3588-webflasher/internal/uf"
+	"github.com/SilenWang/fydetab-flash-web/internal/imageplan"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/uf"
 )
 
 // planFromReport projects the M2 dry-run report onto the writer's plan using

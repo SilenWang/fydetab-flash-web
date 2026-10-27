@@ -28,9 +28,9 @@ import (
 	"syscall/js"
 	"time"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/imageplan"
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
+	"github.com/SilenWang/fydetab-flash-web/internal/imageplan"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkfw"
 )
 
 // verifyProgressQuiet is the minimum interval between two progress events.

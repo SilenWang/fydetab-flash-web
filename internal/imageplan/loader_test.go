@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkcrc"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkcrc"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkfw"
 )
 
 // --- fixtures ---------------------------------------------------------------
