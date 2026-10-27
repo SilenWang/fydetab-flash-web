@@ -1,6 +1,8 @@
 # 快速上手：用安装版 PWA 刷 Fydetab Duo
 
 适用：Fydetab Duo（RK3588 / FydeOS v23.0-SP1）。整条流程在浏览器里完成，镜像不上传、不需要后端。
+页面各区块的详细行为见 [usage-web.md](usage-web.md)，驱动与授权问题见 [webusb-drivers.md](webusb-drivers.md)，
+文档总索引见 [README.md](README.md)。
 
 ## 0. 你需要
 
