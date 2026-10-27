@@ -28,7 +28,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rkcrc"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkcrc"
 )
 
 const (

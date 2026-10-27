@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // This file holds the two mock transports the write path is developed against:

@@ -12,11 +12,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
-	"github.com/SilenWang/rk3588-webflasher/internal/uf"
+	"github.com/SilenWang/fydetab-flash-web/internal/gpt"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkfw"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/uf"
 )
 
 // ModelNameFallback is only used in the warning above.

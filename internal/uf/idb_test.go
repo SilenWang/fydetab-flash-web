@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 func TestRC4MatchesTheClassicTestVector(t *testing.T) {

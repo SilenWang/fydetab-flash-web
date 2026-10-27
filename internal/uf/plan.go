@@ -3,9 +3,9 @@ package uf
 import (
 	"fmt"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/gpt"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // Plan is what the runner executes. It is a projection of the M2 dry-run

@@ -16,9 +16,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/gpt"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // GPTReport records the partition table write.

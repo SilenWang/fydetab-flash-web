@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
+	"github.com/SilenWang/fydetab-flash-web/internal/gpt"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkfw"
 )
 
 // syntheticCmdline is invented for the test; it is not the Fydetab Duo

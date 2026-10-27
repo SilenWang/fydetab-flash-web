@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rkcrc"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkcrc"
 )
 
 // verifyBufferSize is used for streaming multi-GiB image ranges.

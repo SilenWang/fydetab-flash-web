@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
 )
 
 // referenceDiskSectors is the flash size the reference device reports

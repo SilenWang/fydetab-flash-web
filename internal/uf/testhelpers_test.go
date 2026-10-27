@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkcrc"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkcrc"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // The fixtures in this file are synthetic: no Fydetab Duo byte is hard-coded,

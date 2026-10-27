@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
+	"github.com/SilenWang/fydetab-flash-web/internal/gpt"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rkcrc"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkcrc"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkfw"
 )
 
 // CLI-level fixture: a bare RKAF image (no RKFW, no MD5) with two partitions,

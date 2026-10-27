@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // RawInfo is what the page's main thread can read from a WebUSB device without

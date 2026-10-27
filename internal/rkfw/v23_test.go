@@ -18,7 +18,7 @@ package rkfw
 import (
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/testimage"
+	"github.com/SilenWang/fydetab-flash-web/internal/testimage"
 )
 
 func v23Image(t *testing.T) *Image {

@@ -1,7 +1,7 @@
 [workspace]
 authors = ["Sylens Wong <silenseek14@gmail.com>"]
 channels = ["conda-forge"]
-name = "rk3588-webflasher"
+name = "fydetab-flash-web"
 platforms = ["linux-64", "osx-64", "osx-arm64"]
 version = "0.1.0"
 

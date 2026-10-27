@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rkcrc"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkcrc"
 )
 
 // fixturePart describes one RKAF item for the synthetic images built below.

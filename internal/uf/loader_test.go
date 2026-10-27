@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	deviceapi "github.com/SilenWang/rk3588-webflasher/internal/device"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	deviceapi "github.com/SilenWang/fydetab-flash-web/internal/device"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // --- loader self-check ------------------------------------------------------

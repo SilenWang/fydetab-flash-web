@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // Op is a rockusb opcode used by the write path. These are declared here, not

@@ -60,7 +60,7 @@ function packageOf(bytes) {
         { name: 'MiniLoaderAll.bin', data: new Uint8Array(1024).fill(7), method: DEFLATE },
         { name: 'Image/update.img', data: bytes, method: DEFLATE },
       ],
-      { forceZip64: true, comment: 'rk3588-webflasher test package' },
+      { forceZip64: true, comment: 'fydetab-flash-web test package' },
     ),
   ]);
 }

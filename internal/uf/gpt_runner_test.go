@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/gpt"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // corruptReads flips the first byte of the data stage of READ_LBA for one LBA,

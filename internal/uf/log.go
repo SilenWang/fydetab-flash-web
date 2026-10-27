@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // LogSchema tags every line of a uf log.

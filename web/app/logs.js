@@ -118,7 +118,7 @@ export function createLogStore({ limit = 5000, now = () => new Date(), onChange 
         JSON.stringify({
           ts: now().toISOString(),
           type: 'header',
-          app: 'rk3588-webflasher',
+          app: 'fydetab-flash-web',
           entries: entries.length,
           dropped,
           ...header,

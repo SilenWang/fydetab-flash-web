@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/gpt"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // loaderSessionFrames records what a full uf run against a LOADER device looks

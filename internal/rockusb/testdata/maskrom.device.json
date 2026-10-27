@@ -1,5 +1,5 @@
 {
-  "schema": "rk3588-webflasher/device@1",
+  "schema": "fydetab-flash-web/device@1",
   "readOnly": true,
   "collectedAt": "2026-10-25T04:04:45.775Z",
   "source": "web/probe page export (probe-export.json) on real hardware",

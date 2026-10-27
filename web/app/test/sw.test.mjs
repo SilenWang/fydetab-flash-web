@@ -41,8 +41,8 @@ function makeEnv({ offline = false, failUrls = new Set(), statuses = new Map() }
   const fetched = [];
   const calls = { skipWaiting: 0, claim: 0 };
   const handlers = new Map();
-  const scope = { origin: 'https://example.test', pathname: '/rk3588-webflasher/app/sw.js' };
-  const base = 'https://example.test/rk3588-webflasher/app/';
+  const scope = { origin: 'https://example.test', pathname: '/fydetab-flash-web/app/sw.js' };
+  const base = 'https://example.test/fydetab-flash-web/app/';
 
   const absolute = (request) => {
     const url = typeof request === 'string' ? request : request.url;
@@ -134,7 +134,7 @@ test('install precaches every file the app boots from', async () => {
 
   assert.equal(env.calls.skipWaiting, 1, 'install must take over without a second reload');
   const [cacheName] = env.stores.keys();
-  assert.match(cacheName, /^rk3588-webflasher-/);
+  assert.match(cacheName, /^fydetab-flash-web-/);
   const entries = env.cacheStore(cacheName);
   assert.ok(entries.size >= 15, `precached only ${entries.size} files`);
   for (const path of ['./index.html', './app.js', './worker.js', './wasm/rk3588.wasm', './zip-source.js']) {
@@ -144,7 +144,7 @@ test('install precaches every file the app boots from', async () => {
 
 test('a failed precache does not leave a half-filled cache behind', async () => {
   const env = makeEnv();
-  const broken = 'https://example.test/rk3588-webflasher/app/wasm/rk3588.wasm';
+  const broken = 'https://example.test/fydetab-flash-web/app/wasm/rk3588.wasm';
   const withFailure = makeEnv({ failUrls: new Set([broken]) });
   await assert.rejects(withFailure.dispatch('install').done);
   assert.equal(withFailure.stores.size, 0, 'the incomplete cache must be deleted');
@@ -156,7 +156,7 @@ test('a failed precache does not leave a half-filled cache behind', async () => 
 
 test('activate drops caches from other versions and claims the clients', async () => {
   const env = makeEnv();
-  env.stores.set('rk3588-webflasher-m3-old', new Map());
+  env.stores.set('fydetab-flash-web-m3-old', new Map());
   await env.dispatch('install').done;
   const { done } = env.dispatch('activate');
   await done;
@@ -179,7 +179,7 @@ test('a precached URL is served offline, with no network at all', async () => {
   const offline = await installThenGoOffline();
   const fetchedBefore = offline.fetched.length;
 
-  const request = { method: 'GET', url: 'https://example.test/rk3588-webflasher/app/app.js', mode: 'no-cors' };
+  const request = { method: 'GET', url: 'https://example.test/fydetab-flash-web/app/app.js', mode: 'no-cors' };
   const { event, done } = offline.dispatch('fetch', { request });
   const response = await event.response;
   await done;
@@ -191,17 +191,17 @@ test('a precached URL is served offline, with no network at all', async () => {
 test('an offline navigation falls back to the cached shell', async () => {
   const offline = await installThenGoOffline();
 
-  const request = { method: 'GET', url: 'https://example.test/rk3588-webflasher/app/some/deep/link', mode: 'navigate' };
+  const request = { method: 'GET', url: 'https://example.test/fydetab-flash-web/app/some/deep/link', mode: 'navigate' };
   const { event, done } = offline.dispatch('fetch', { request });
   const response = await event.response;
   await done;
 
-  assert.match(response.body, /^body:https:\/\/example\.test\/rk3588-webflasher\/app\/index\.html$/);
+  assert.match(response.body, /^body:https:\/\/example\.test\/fydetab-flash-web\/app\/index\.html$/);
 });
 
 test('offline and uncached: a network request fails instead of lying', async () => {
   const offline = await installThenGoOffline();
-  const request = { method: 'GET', url: 'https://example.test/rk3588-webflasher/app/late.js', mode: 'no-cors' };
+  const request = { method: 'GET', url: 'https://example.test/fydetab-flash-web/app/late.js', mode: 'no-cors' };
   const { event, done } = offline.dispatch('fetch', { request });
   // respondWith and waitUntil hold the same promise: settle both, or the
   // second one shows up later as an unhandled rejection.
@@ -214,9 +214,9 @@ test('offline and uncached: a network request fails instead of lying', async () 
 test('only same-origin GETs are handled; everything else goes to the network', () => {
   const env = makeEnv();
   for (const request of [
-    { method: 'POST', url: 'https://example.test/rk3588-webflasher/app/app.js', mode: 'no-cors' },
+    { method: 'POST', url: 'https://example.test/fydetab-flash-web/app/app.js', mode: 'no-cors' },
     { method: 'GET', url: 'https://cdn.example.net/library.js', mode: 'no-cors' },
-    { method: 'GET', url: 'https://example.test/rk3588-webflasher/app/sw.js', mode: 'no-cors' },
+    { method: 'GET', url: 'https://example.test/fydetab-flash-web/app/sw.js', mode: 'no-cors' },
   ]) {
     const { event } = env.dispatch('fetch', { request });
     assert.equal(event.response, undefined, `${request.method} ${request.url} must not be intercepted`);
@@ -226,7 +226,7 @@ test('only same-origin GETs are handled; everything else goes to the network', (
 test('a fetched-but-uncached asset is stored for the next launch', async () => {
   const env = makeEnv();
   await env.dispatch('install').done;
-  const request = { method: 'GET', url: 'https://example.test/rk3588-webflasher/app/extra.css', mode: 'no-cors' };
+  const request = { method: 'GET', url: 'https://example.test/fydetab-flash-web/app/extra.css', mode: 'no-cors' };
   const { event, done } = env.dispatch('fetch', { request });
   const response = await event.response;
   await done;
@@ -239,7 +239,7 @@ test('a fetched-but-uncached asset is stored for the next launch', async () => {
 });
 
 test('an error response is not cached', async () => {
-  const url = 'https://example.test/rk3588-webflasher/app/missing.js';
+  const url = 'https://example.test/fydetab-flash-web/app/missing.js';
   const env = makeEnv({ statuses: new Map([[url, 500]]) });
   await env.dispatch('install').done;
   const request = { method: 'GET', url, mode: 'no-cors' };

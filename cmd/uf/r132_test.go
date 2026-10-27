@@ -8,10 +8,10 @@ package main
 import (
 	"testing"
 
-	gptpkg "github.com/SilenWang/rk3588-webflasher/internal/gpt"
-	"github.com/SilenWang/rk3588-webflasher/internal/parameter"
-	"github.com/SilenWang/rk3588-webflasher/internal/rkfw"
-	"github.com/SilenWang/rk3588-webflasher/internal/testimage"
+	gptpkg "github.com/SilenWang/fydetab-flash-web/internal/gpt"
+	"github.com/SilenWang/fydetab-flash-web/internal/parameter"
+	"github.com/SilenWang/fydetab-flash-web/internal/rkfw"
+	"github.com/SilenWang/fydetab-flash-web/internal/testimage"
 )
 
 func r132Report(t *testing.T) *Report {

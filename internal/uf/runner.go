@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/gpt"
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/gpt"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // Phase names. "ul", "gpt", "wl" and "rd" are the M2 dry-run stage names; "td",

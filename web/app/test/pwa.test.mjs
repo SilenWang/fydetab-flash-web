@@ -30,7 +30,7 @@ function precacheList() {
 
 test('manifest is a valid installable web app manifest', () => {
   const manifest = JSON.parse(read('manifest.webmanifest'));
-  assert.equal(manifest.name, 'RK3588 WebFlasher');
+  assert.equal(manifest.name, 'Fydetab WebFlasher');
   assert.ok(manifest.short_name.length <= 12, 'short_name must fit under a launcher icon');
   assert.equal(manifest.start_url, './');
   assert.equal(manifest.scope, './');

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/testimage"
+	"github.com/SilenWang/fydetab-flash-web/internal/testimage"
 )
 
 // holeFixture describes one synthetic image with a hole.

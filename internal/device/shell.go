@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SilenWang/rk3588-webflasher/internal/rockusb"
+	"github.com/SilenWang/fydetab-flash-web/internal/rockusb"
 )
 
 // Bridge is the page-side half of the wasm core: the only way the shell can
@@ -161,7 +161,7 @@ func (s *Shell) Exec(line string, loaderBytes []byte, loaderName string) Result 
 		return s.help(res)
 	case "version":
 		res.OK = true
-		res.Lines = []string{fmt.Sprintf("rk3588-webflasher core %s (rockusb CBW + Download Boot, no flash writes)", CoreVersion)}
+		res.Lines = []string{fmt.Sprintf("fydetab-flash-web core %s (rockusb CBW + Download Boot, no flash writes)", CoreVersion)}
 		return s.finishCode(res, rockusb.ErrSuccess)
 	default:
 		return s.fail(res, nil, rockusb.ErrDeviceNotSupport,
@@ -549,7 +549,7 @@ func shortDetail(s string) string {
 
 func (s *Shell) help(res Result) Result {
 	res.OK = true
-	res.Lines = []string{"rk3588-webflasher M1 — rockusb over WebUSB（无写 flash 路径）"}
+	res.Lines = []string{"fydetab-flash-web M1 — rockusb over WebUSB（无写 flash 路径）"}
 	for _, c := range Commands {
 		res.Lines = append(res.Lines, fmt.Sprintf("  %-24s %s", c.Usage, c.Summary))
 	}
