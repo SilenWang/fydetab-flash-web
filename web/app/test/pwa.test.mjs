@@ -59,12 +59,11 @@ test('the page declares the manifest and the install surface', () => {
   assert.match(html, /<link rel="icon"/);
   assert.match(html, /name="theme-color"/);
   assert.match(html, /id="file-image"[^>]*accept="[^"]*\.zip/, 'the image picker must accept .zip');
-  assert.match(html, /id="image-dialog"/, 'the system picker must be a dialog');
-  assert.match(html, /id="device-dialog"/, 'the device picker must be a dialog');
-  assert.match(html, /id="btn-write"/, 'the flash tile must own the write action');
+  assert.match(html, /id="version-dialog"/, 'the version picker must be a dialog');
+  assert.match(html, /id="btn-write"/, 'the persistent action bar must own the write button');
   assert.match(html, /id="log-body"/, 'the log panel must live on the page, not behind a drawer');
 
-  for (const id of ['btn-install', 'btn-reload-app', 'install-note', 'sw-note', 'reconnect', 'reconnect-steps', 'btn-reconnect-auth', 'btn-export-log', 'btn-toggle-log', 'image-choices', 'btn-image', 'btn-device']) {
+  for (const id of ['btn-install', 'btn-reload-app', 'install-note', 'sw-note', 'reconnect', 'reconnect-steps', 'btn-reconnect-auth', 'btn-export-log', 'btn-toggle-log', 'image-choices']) {
     assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
   }
 });

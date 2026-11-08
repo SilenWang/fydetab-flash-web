@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#f4f4f6" />
+    <meta name="theme-color" content="#fbfbfc" />
     <title>Fydetab Duo 刷写工具</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icons/icon-192.png" sizes="192x192" type="image/png" />
@@ -12,93 +12,64 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="stage">
-      <section class="flasher" aria-label="Fydetab Duo 刷写">
-        <header class="flasher-head">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M13 2 5 14h6l-1 8 8-12h-6l1-8Z" />
-            </svg>
-          </span>
-          <h1>Fydetab Duo 刷写</h1>
-        </header>
+    <header class="appbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13 2 5 14h6l-1 8 8-12h-6l1-8Z" />
+          </svg>
+        </span>
+        <span class="brand-name">Fydetab Duo 刷写</span>
+      </div>
+    </header>
 
-        <div id="banner" class="banner" role="status" hidden></div>
+    <div id="banner" class="banner" role="status" hidden></div>
 
-        <!-- the three moves, the way Etcher lays them out -------------------- -->
-        <div class="tiles">
-          <button id="btn-image" class="tile" type="button" aria-haspopup="dialog">
-            <span class="tile-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 3.5v10" />
-                <path d="M8 10 12 14l4-4" />
-                <path d="M4.5 16v3A2.5 2.5 0 0 0 7 21.5h10a2.5 2.5 0 0 0 2.5-2.5v-3" />
-              </svg>
-            </span>
-            <span id="tile-image-body" class="tile-body">
-              <span id="tile-image-title" class="tile-title">选择系统</span>
-              <span id="tile-image-sub" class="tile-sub">FydeOS · openFyde</span>
-            </span>
-          </button>
+    <main id="main" class="page">
+      <section class="card card-image" aria-labelledby="h-image">
+        <h2 id="h-image">选择系统</h2>
 
-          <button id="btn-device" class="tile" type="button" aria-haspopup="dialog">
-            <span class="tile-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
-                <path d="M10.5 5.5h3" />
-              </svg>
-            </span>
-            <span id="tile-device-body" class="tile-body">
-              <span id="tile-device-title" class="tile-title">选择设备</span>
-              <span id="tile-device-sub" class="tile-sub">USB 连接</span>
-            </span>
-          </button>
-
-          <button id="btn-write" class="tile tile-flash" type="button" disabled>
-            <span class="tile-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M13 2 5 14h6l-1 8 8-12h-6l1-8Z" />
-              </svg>
-            </span>
-            <span class="tile-body">
-              <span id="tile-write-title" class="tile-title">开始刷写</span>
-              <span id="cta-hint" class="tile-sub">先选系统</span>
-            </span>
-          </button>
+        <div id="image-choices" class="choices">
+          <p class="muted">正在读取版本…</p>
         </div>
 
-        <!-- progress -------------------------------------------------------- -->
+        <div class="file-row">
+          <span class="file-name" id="image-label">或使用本地镜像</span>
+          <button id="btn-pick-image" class="btn ghost small" type="button">选择文件</button>
+          <input id="file-image" type="file" accept=".img,.bin,.zip,application/octet-stream,application/zip" />
+        </div>
+
         <div id="download-progress" class="progress" hidden>
-          <div class="progress-row">
-            <span class="progress-label">下载</span>
-            <span class="track"><span id="download-bar" class="fill"></span></span>
-            <button id="btn-download-cancel" class="btn ghost small" type="button">取消</button>
-          </div>
+          <div class="track"><span id="download-bar" class="fill"></span></div>
           <div class="progress-row">
             <p id="download-text" class="progress-text"></p>
-            <a id="download-fallback" class="link" target="_blank" rel="noreferrer" hidden>浏览器下载</a>
+            <span class="progress-actions">
+              <button id="btn-download-cancel" class="btn ghost small" type="button">取消</button>
+              <a id="download-fallback" class="link" target="_blank" rel="noreferrer" hidden>在新标签页下载</a>
+            </span>
           </div>
         </div>
 
         <div id="verify-progress" class="progress" hidden>
-          <div class="progress-row">
-            <span class="progress-label">校验</span>
-            <span class="track small"><span id="verify-bar" class="fill"></span></span>
-          </div>
+          <div class="track small"><span id="verify-bar" class="fill"></span></div>
           <p id="verify-progress-text" class="progress-text"></p>
         </div>
 
-        <div id="write-progress" class="progress" hidden>
-          <div class="progress-row">
-            <span class="track"><span id="write-bar" class="fill"></span></span>
-            <button id="btn-cancel-write" class="btn ghost small" type="button" hidden>取消</button>
-          </div>
-          <p id="write-progress-text" class="progress-text"></p>
+        <p id="image-summary" class="note" hidden></p>
+        <p id="fsa-note" class="note"></p>
+      </section>
+
+      <section class="card card-device" aria-labelledby="h-device">
+        <div class="card-head">
+          <h2 id="h-device">设备</h2>
+          <span class="spacer"></span>
+          <button id="btn-refresh" class="btn ghost small" type="button" hidden>刷新</button>
+          <button id="btn-authorize" class="btn secondary small" type="button">连接设备</button>
         </div>
 
-        <p id="fsa-note" class="note"></p>
+        <div id="devices" class="devices"></div>
+        <p id="device-selected" class="note"></p>
 
-        <!-- reconnecting ---------------------------------------------------- -->
         <div id="reconnect" class="reconnect" hidden>
           <p class="reconnect-title">设备已断开</p>
           <ol id="reconnect-steps"></ol>
@@ -108,9 +79,8 @@
           </div>
         </div>
 
-        <!-- what is still blocking the write -------------------------------- -->
         <div id="write-block" class="write-block">
-          <ul id="checklist" class="checks" hidden></ul>
+          <ul id="checklist" class="checks gates" hidden></ul>
 
           <div id="erase-row" class="erase-row" hidden>
             <p id="erase-title" class="erase-title"></p>
@@ -133,26 +103,27 @@
             <ol id="write-failure-steps"></ol>
           </div>
         </div>
+      </section>
 
-        <!-- log ------------------------------------------------------------- -->
-        <section class="log" aria-labelledby="h-log">
-          <div class="log-head">
-            <button id="btn-toggle-log" class="log-toggle" type="button" aria-expanded="false" aria-label="展开日志">
-              <h2 id="h-log">日志</h2>
-              <span id="log-count" class="log-count"></span>
-            </button>
-            <span class="spacer"></span>
-            <button id="btn-export-log" class="btn ghost small" type="button" hidden>导出</button>
-          </div>
-          <div id="log-body" class="log-body" hidden>
-            <ol id="log-lines" class="log-lines" aria-live="polite"></ol>
-            <p id="log-empty" class="muted">还没有记录。</p>
-          </div>
-        </section>
+      <section class="card card-log" aria-labelledby="h-log">
+        <div class="card-head">
+          <h2 id="h-log">日志</h2>
+          <span id="log-count" class="note"></span>
+          <span class="spacer"></span>
+          <button id="btn-export-log" class="btn ghost small" type="button">导出</button>
+          <button id="btn-toggle-log" class="btn ghost small" type="button" aria-expanded="false">展开</button>
+        </div>
+        <div id="log-body" class="log-body" hidden>
+          <ol id="log-lines" class="log-lines" aria-live="polite"></ol>
+          <p id="log-empty" class="muted">还没有记录。</p>
+        </div>
       </section>
 
       <footer class="page-foot">
-        <p>固件来自 FydeOS 与 openFyde 官方发布页。</p>
+        <p>
+          仅支持 Fydetab Duo（RK3588）·
+          <a href="https://github.com/rockchip-linux/rkdeveloptool" target="_blank" rel="noreferrer">rkdeveloptool</a>（GPL-2.0）
+        </p>
         <p class="foot-actions">
           <button id="btn-install" class="btn ghost small" type="button" hidden>安装到桌面</button>
           <button id="btn-reload-app" class="btn ghost small" type="button" hidden>刷新页面</button>
@@ -161,54 +132,31 @@
       </footer>
     </main>
 
-    <!-- 1 · image --------------------------------------------------------- -->
-    <dialog id="image-dialog" class="dialog">
-      <div class="dialog-head">
-        <h2>选择系统</h2>
-        <button id="btn-close-image" class="btn ghost small" type="button">关闭</button>
+    <div class="actionbar">
+      <div class="action-progress" id="write-progress" hidden>
+        <div class="track"><span id="write-bar" class="fill"></span></div>
       </div>
-      <div class="dialog-body">
-        <div id="image-choices" class="choices">
-          <p class="muted">正在读取版本…</p>
+      <div class="action-inner">
+        <div class="action-summary">
+          <span id="action-image" class="action-label">未选择镜像</span>
+          <span id="action-device" class="action-sub">未连接设备</span>
+          <p id="write-progress-text" class="action-sub" hidden></p>
         </div>
-        <ul id="version-list" class="versions"></ul>
+        <div class="action-buttons">
+          <button id="btn-cancel-write" class="btn ghost" type="button" disabled hidden>取消</button>
+          <button id="btn-write" class="btn primary lg" type="button" disabled>开始刷写</button>
+        </div>
       </div>
-      <div class="dialog-foot">
-        <button id="btn-pick-image" class="btn secondary small" type="button">选择本地文件</button>
-        <span class="note">也可以把镜像文件直接拖到页面上</span>
-      </div>
-    </dialog>
+    </div>
 
-    <!-- 2 · device -------------------------------------------------------- -->
-    <dialog id="device-dialog" class="dialog">
+    <dialog id="version-dialog" class="dialog">
       <div class="dialog-head">
-        <h2>选择设备</h2>
-        <button id="btn-close-device" class="btn ghost small" type="button">关闭</button>
+        <h2 id="version-title">选择版本</h2>
+        <button id="btn-close-versions" class="btn ghost small" type="button">关闭</button>
       </div>
-      <div class="dialog-body">
-        <ul id="devices" class="devices"></ul>
-        <button id="btn-authorize" class="target" type="button">
-          <span class="target-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 21V9" />
-              <path d="M8 13h8" />
-              <path d="M9 9V6a3 3 0 0 1 6 0v3" />
-              <rect x="6" y="13" width="12" height="8" rx="2" />
-            </svg>
-          </span>
-          <span class="target-text">
-            <span class="target-title">连接设备</span>
-            <span class="target-sub">用 USB 线把 Fydetab Duo 接到电脑</span>
-          </span>
-        </button>
-      </div>
-      <div class="dialog-foot">
-        <button id="btn-refresh" class="btn secondary small" type="button">刷新</button>
-        <span class="note">刷写会清除设备上的原有系统</span>
-      </div>
+      <ul id="version-list" class="versions"></ul>
     </dialog>
 
-    <input id="file-image" type="file" accept=".img,.bin,.zip,application/octet-stream,application/zip" />
     <span id="sw-note" class="sr-only"></span>
 
     <script type="module" src="./app.js"></script>
