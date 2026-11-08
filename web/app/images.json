@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "updated": "2026-11-08",
-  "note": "官方镜像清单。每个品牌的条目按发布时间倒序排列，页面把每个品牌的第一条当成「最新」。size/sha256 取自发布页 / GitHub Release body（openFyde r144 起改发 .xz，页面只能直读 .zip 与 .img）。url 是厂商直链，两个站点都不返回 Access-Control-Allow-Origin，浏览器无法直接读取，页面会退化成「在新标签页下载」并引导用户用本地文件。",
+  "note": "官方镜像清单。每个品牌的条目按发布时间倒序排列，页面把每个品牌的第一条当成「最新」。size/sha256 取自发布页 / GitHub Release body（openFyde r144 起改发 .xz，页面只能直读 .zip 与 .img）。url 是厂商直链，两个站点都不返回 Access-Control-Allow-Origin，页面读不到字节，所以点版本行就是让浏览器自己下载（普通导航式下载），下完由用户在页面上选回本地文件。",
   "images": [
     {
       "id": "fydeos-23.1",

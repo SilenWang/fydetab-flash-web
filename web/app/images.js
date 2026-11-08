@@ -1,29 +1,26 @@
-// Image catalogue, download probe and streaming save.
+// Image catalogue and the plain (navigation) download.
 //
-// The page has to answer three questions before it can offer "下载":
+// The page and the vendor files live on different origins, and neither
+// download.fydeos.io nor the GitHub release assets send
+// `Access-Control-Allow-Origin` (SIL-890). No amount of cleverness lets script
+// read those bytes: `fetch` is refused, `no-cors` yields an opaque body, a
+// directory grant buys local read permission, not network read permission.
 //
-//   1. may the browser read this URL at all? A cross-origin file without
-//      `Access-Control-Allow-Origin` cannot be fetched by script. Rather than
-//      failing silently (or showing a progress bar that never moves), the page
-//      probes first and degrades to "open it in a new tab", with the reason.
-//   2. can this browser stream to disk? showSaveFilePicker + a WritableStream
-//      is what keeps a 8 GiB image out of memory; Firefox/Safari cannot do it
-//      and are told so instead of getting a dead button.
-//   3. how far along is it? bytes/total, speed and ETA come from the same read
-//      loop that writes, never from a timer.
+// So a download here is a navigation, not a transfer: the page hands the URL to
+// the browser's own downloader with an `<a download>` click and keeps its hands
+// off the bytes. The file lands in the browser's download folder; the user
+// picks it back up with the local file picker. That is why this module has no
+// fetch, no probe and no progress: there is nothing to read.
 //
-// Everything here takes its browser surface as an argument (fetch, picker), so
-// the logic is testable in node without a DOM. app.js supplies the real ones.
-// User-visible text comes from ./i18n.js; each entry point takes a `t` so a
-// test can pin the language.
+// Everything here takes its browser surface as an argument, so the logic is
+// testable in node without a DOM. app.js supplies the real one.
+// User-visible text comes from ./i18n.js; each entry point that produces copy
+// takes a `t` so a test can pin the language.
 
 import { t as translate } from './i18n.js';
 
 /** CATALOG_URL is relative to the page (/app/). */
 export const CATALOG_URL = './images.json';
-
-/** probeSampleMiB is how much a ranged GET asks for when HEAD is useless. */
-const PROBE_BYTES = 1;
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -115,25 +112,6 @@ export async function loadCatalog({ fetchImpl = globalThis.fetch, url = CATALOG_
   }
 }
 
-/**
- * capabilityReport says what this browser can do. `save` is the one that
- * matters: without it a multi-GiB download would have to be buffered.
- */
-export function capabilityReport(env = globalThis, { t = translate } = {}) {
-  const save = typeof env.showSaveFilePicker === 'function';
-  const open = typeof env.showOpenFilePicker === 'function';
-  const streams = typeof env.ReadableStream === 'function' && typeof env.WritableStream === 'function';
-  return {
-    save,
-    open,
-    streams,
-    // Chromium-only surfaces; the page must say so rather than disable a
-    // button without a word.
-    chromiumOnly: !save || !streams,
-    advice: save && streams ? '' : t('images.advice.chromium'),
-  };
-}
-
 /** formatBytes renders binary units the same way the rest of the page does. */
 export function formatBytes(n) {
   if (!Number.isFinite(n) || n < 0) return '?';
@@ -168,27 +146,6 @@ export function formatDuration(seconds, { t = translate } = {}) {
   return t('time.hours', { hours, minutes: String(minutes % 60).padStart(2, '0') });
 }
 
-/**
- * progressSnapshot turns the bytes written so far into the three numbers the
- * UI shows. Speed is the average since the transfer started: for a single
- * long download that is stable, while an instant rate jumps around with
- * buffering.
- */
-export function progressSnapshot({ received = 0, total = 0, elapsedMs = 0 } = {}) {
-  const seconds = elapsedMs / 1000;
-  const speed = seconds > 0 ? received / seconds : 0;
-  const remainingBytes = total > 0 ? Math.max(0, total - received) : null;
-  const etaSeconds = speed > 0 && remainingBytes !== null ? remainingBytes / speed : null;
-  return {
-    received,
-    total,
-    percent: total > 0 ? Math.min(100, (received / total) * 100) : null,
-    speed,
-    etaSeconds,
-    elapsedMs,
-  };
-}
-
 function absoluteURL(url, base) {
   try {
     return new URL(url, base).toString();
@@ -197,232 +154,68 @@ function absoluteURL(url, base) {
   }
 }
 
-function sameOrigin(a, b) {
-  try {
-    return new URL(a).origin === new URL(b).origin;
-  } catch {
-    return false;
-  }
-}
-
-async function attemptFetch(fetchImpl, url, init) {
-  try {
-    const response = await fetchImpl(url, init);
-    return { response };
-  } catch (err) {
-    return { error: err };
-  }
-}
-
 /**
- * probeCors decides whether the page may fetch `url` itself.
- *
- * The check is a real request, not a guess: a HEAD first (cheap), then a
- * one-byte ranged GET when the server does not answer HEAD. A cross-origin
- * response without `Access-Control-Allow-Origin` is not readable by script
- * even when the status is 200, so the header is checked explicitly instead of
- * trusting `response.ok`.
+ * downloadTarget turns a catalogue row into the two things the navigation
+ * needs: an absolute URL and the file name the browser should use when the
+ * server does not name it. Returns null when the row has no direct link.
  */
-export async function probeCors(
-  url,
-  { fetchImpl = globalThis.fetch, base = globalThis.location?.href ?? 'http://localhost/', signal, t = translate } = {},
-) {
-  const absolute = absoluteURL(url, base);
-  if (sameOrigin(absolute, base)) {
-    return { direct: true, url: absolute, sameOrigin: true, reason: t('images.probe.sameOrigin') };
-  }
-  if (typeof fetchImpl !== 'function') {
-    return { direct: false, url: absolute, sameOrigin: false, reason: t('images.probe.noFetch') };
-  }
-
-  const head = await attemptFetch(fetchImpl, absolute, { method: 'HEAD', mode: 'cors', signal });
-  let response = head.response;
-  let method = 'HEAD';
-  if (!response || !response.ok) {
-    // 405/403 on HEAD is common; a one-byte ranged GET answers the same
-    // question without downloading the image.
-    const got = await attemptFetch(fetchImpl, absolute, {
-      method: 'GET',
-      mode: 'cors',
-      headers: { Range: `bytes=0-${PROBE_BYTES - 1}` },
-      signal,
-    });
-    if (got.response) {
-      response = got.response;
-      method = 'GET';
-      // Do not leave the body of a ranged request hanging.
-      try {
-        await got.response.body?.cancel?.();
-      } catch {
-        // already closed
-      }
-    } else if (head.error) {
-      return {
-        direct: false,
-        url: absolute,
-        sameOrigin: false,
-        reason: t('images.probe.cors', { error: head.error?.message ?? head.error }),
-      };
-    } else {
-      return {
-        direct: false,
-        url: absolute,
-        sameOrigin: false,
-        reason: t('images.probe.rejected', {
-          head: head.response?.status ?? '?',
-          get: got.response?.status ?? '?',
-        }),
-      };
-    }
-  }
-
-  const allow = response.headers?.get?.('access-control-allow-origin') ?? null;
-  const contentLength = Number(response.headers?.get?.('content-length') ?? NaN);
-  const contentType = response.headers?.get?.('content-type') ?? null;
-  if (!allow) {
-    return {
-      direct: false,
-      url: absolute,
-      sameOrigin: false,
-      status: response.status,
-      method,
-      contentLength: Number.isFinite(contentLength) ? contentLength : null,
-      contentType,
-      reason: t('images.probe.noAcao'),
-    };
-  }
+export function downloadTarget(entry, base = globalThis.location?.href ?? 'http://localhost/') {
+  if (!isPlainObject(entry)) return null;
+  const url = nullableString(entry.url);
+  if (!url) return null;
   return {
-    direct: true,
-    url: absolute,
-    sameOrigin: false,
-    status: response.status,
-    method,
-    allowOrigin: allow,
-    contentLength: Number.isFinite(contentLength) ? contentLength : null,
-    contentType,
-    reason: t('images.probe.allowed', { origin: allow }),
+    url: absoluteURL(url, base),
+    name: nullableString(entry.file) ?? 'update.img',
+    label: nullableString(entry.label) ?? '',
   };
 }
 
 /**
- * downloadEntry streams one catalogue entry to a file the user picks.
- *
- * Returns a result object instead of throwing, because every failure mode has
- * a different next step for the user (pick Chrome, open the link in a tab,
- * retry, free disk space). `kind` is what app.js switches on.
+ * matchCatalogFile decides whether a file the user picked is the catalogue row
+ * they just downloaded. A cross-origin download keeps the vendor name (or the
+ * one in GitHub's `Content-Disposition`), so the name is tried first; the size
+ * is the fallback for a browser that renamed it to `update.img`.
  */
-export async function downloadEntry(
-  entry,
-  {
-    fetchImpl = globalThis.fetch,
-    savePicker = globalThis.showSaveFilePicker,
-    base = globalThis.location?.href ?? 'http://localhost/',
-    onProgress,
-    onProbe,
-    signal,
-    now = () => performance.now(),
-    progressIntervalMs = 250,
-    t = translate,
-  } = {},
-) {
-  if (!entry || typeof entry !== 'object') return { ok: false, kind: 'bad-entry', reason: t('images.badEntry') };
-  if (!entry.url) {
-    return {
-      ok: false,
-      kind: 'no-url',
-      reason: t(entry.page ? 'images.noUrl.withPage' : 'images.noUrl.plain'),
-      page: entry.page ?? null,
-    };
-  }
+export function matchCatalogFile(entry, file) {
+  if (!isPlainObject(entry) || !file) return false;
+  const name = (file.name ?? '').toLowerCase();
+  const expected = (entry.file ?? '').toLowerCase();
+  if (expected && name === expected) return true;
+  return Boolean(entry.size) && Boolean(file.size) && entry.size === file.size;
+}
 
-  const caps = capabilityReport(
-    { showSaveFilePicker: savePicker, ReadableStream: globalThis.ReadableStream, WritableStream: globalThis.WritableStream },
-    { t },
-  );
-  if (!caps.save) {
-    return { ok: false, kind: 'unsupported', reason: caps.advice, url: absoluteURL(entry.url, base) };
-  }
+/**
+ * matchCatalogEntry finds the catalogue row a picked file belongs to, if any.
+ * `preferred` is checked first so the row the user just asked the browser to
+ * download wins over an older version that happens to have the same size.
+ */
+export function matchCatalogEntry(entries, file, preferred = null) {
+  if (!Array.isArray(entries) || !file) return null;
+  if (preferred && matchCatalogFile(preferred, file)) return preferred;
+  return entries.find((entry) => matchCatalogFile(entry, file)) ?? null;
+}
 
-  const probe = await probeCors(entry.url, { fetchImpl, base, signal, t });
-  onProbe?.(probe);
-  if (!probe.direct) {
-    return { ok: false, kind: 'cors', reason: probe.reason, url: probe.url, probe };
-  }
-
-  let handle;
-  try {
-    handle = await savePicker({ suggestedName: entry.file ?? 'update.img' });
-  } catch (err) {
-    return {
-      ok: false,
-      kind: err?.name === 'AbortError' ? 'cancelled' : 'picker',
-      reason:
-        err?.name === 'AbortError'
-          ? t('images.picker.cancelled')
-          : t('images.picker.failed', { error: err?.message ?? err }),
-      url: probe.url,
-    };
-  }
-
-  const writable = await handle.createWritable();
-  const started = now();
-  let received = 0;
-  let total = probe.contentLength ?? entry.size ?? 0;
-  let lastTick = -Infinity;
-
-  try {
-    const response = await fetchImpl(probe.url, { signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText ?? ''}`.trim());
-    const declared = Number(response.headers?.get?.('content-length') ?? NaN);
-    if (Number.isFinite(declared) && declared > 0) total = declared;
-    if (!response.body) throw new Error(t('images.transfer.noBody'));
-
-    const reader = response.body.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value || value.length === 0) continue;
-      // One chunk in, one chunk out: the image never accumulates in memory.
-      await writable.write(value);
-      received += value.length;
-      const elapsedMs = now() - started;
-      if (elapsedMs - lastTick >= progressIntervalMs) {
-        lastTick = elapsedMs;
-        onProgress?.(progressSnapshot({ received, total, elapsedMs }));
-      }
-    }
-    await writable.close();
-  } catch (err) {
-    try {
-      await writable.abort?.(err);
-    } catch {
-      // The writable may already be closed by the fetch failure.
-    }
-    return {
-      ok: false,
-      kind: 'transfer',
-      reason: t('images.transfer.failed', { error: err?.message ?? err }),
-      url: probe.url,
-      received,
-      total,
-    };
-  }
-
-  const elapsedMs = now() - started;
-  const snapshot = progressSnapshot({ received, total, elapsedMs });
-  onProgress?.(snapshot);
-
-  let file = null;
-  let name = handle.name ?? entry.file ?? 'update.img';
-  try {
-    if (typeof handle.getFile === 'function') {
-      file = await handle.getFile();
-      name = file.name ?? name;
-    }
-  } catch {
-    // A handle from a picker we do not own may not expose getFile; the user
-    // can still pick the file with "选择本地镜像".
-  }
-
-  return { ok: true, kind: 'saved', file, name, ...snapshot, url: probe.url, probe };
+/**
+ * triggerDownload hands the URL to the browser's downloader with an
+ * `<a download>` click and returns immediately.
+ *
+ * `download` is a hint the browser only honours same-origin; for these
+ * cross-origin files it still works out as a download because the vendors
+ * serve a file the browser will not render (zip / octet-stream, and GitHub
+ * sends `Content-Disposition: attachment`). Either way the page stays put and
+ * never sees a byte — which is the point.
+ */
+export function triggerDownload(entry, { document: doc = globalThis.document, base } = {}) {
+  const target = downloadTarget(entry, base);
+  if (!target || typeof doc?.createElement !== 'function' || !doc.body) return null;
+  const link = doc.createElement('a');
+  link.href = target.url;
+  link.download = target.name;
+  link.rel = 'noreferrer';
+  link.referrerPolicy = 'no-referrer';
+  link.hidden = true;
+  doc.body.appendChild(link);
+  link.click();
+  link.remove();
+  return target;
 }

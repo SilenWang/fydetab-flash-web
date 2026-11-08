@@ -67,20 +67,17 @@
               <span id="tile-write-title" class="tile-title" data-i18n="action.start">Start flashing</span>
               <span id="cta-hint" class="tile-sub" data-i18n="cta.pickImage">Choose an image first</span>
             </span>
+            <span id="write-image-chip" class="tile-chip" hidden></span>
           </button>
         </div>
 
-        <!-- progress -------------------------------------------------------- -->
-        <div id="download-progress" class="progress" hidden>
-          <div class="progress-row">
-            <span class="progress-label" data-i18n="progress.download">Download</span>
-            <span class="track"><span id="download-bar" class="fill"></span></span>
-            <button id="btn-download-cancel" class="btn ghost small" type="button" data-i18n="action.cancel">Cancel</button>
-          </div>
-          <div class="progress-row">
-            <p id="download-text" class="progress-text"></p>
-            <a id="download-fallback" class="link" target="_blank" rel="noreferrer" hidden data-i18n="action.browserDownload">Browser download</a>
-          </div>
+        <!-- waiting on the browser's own download ---------------------------- -->
+        <div id="download-hint" class="hint" hidden>
+          <p id="download-hint-text" class="hint-text" role="status">
+            <span id="download-hint-title" class="hint-title"></span>
+            <span class="hint-body" data-i18n="download.hintBody">Wait for the browser to finish downloading, then choose the image manually.</span>
+          </p>
+          <button id="btn-hint-pick" class="btn secondary small" type="button" data-i18n="download.hintPick">Choose the image</button>
         </div>
 
         <div id="verify-progress" class="progress" hidden>
@@ -98,8 +95,6 @@
           </div>
           <p id="write-progress-text" class="progress-text"></p>
         </div>
-
-        <p id="fsa-note" class="note"></p>
 
         <!-- reconnecting ---------------------------------------------------- -->
         <div id="reconnect" class="reconnect" hidden>

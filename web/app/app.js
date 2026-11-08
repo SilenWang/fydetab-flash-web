@@ -2,7 +2,7 @@
 //
 //   1 选系统    两个官方品牌 → 版本弹窗；或者直接选本地文件
 //   2 连接设备  已授权的 0x2207 设备、重连向导、写入条件
-//   3 日志      底部一块，可滚动、可导出；校验与协议细节只往这里写
+//   3 开始刷写  只差什么就说一句；写入与校验的细节都在日志里
 //
 // The protocol decisions all live elsewhere: WebUSB in usb-host.js, the write
 // state machine in the Go/WASM core, the gates in preflight.js. This file owns
@@ -18,7 +18,7 @@
 
 import { createWebUSBHost } from './usb-host.js';
 import { CHECK_FIRST_COMMAND, CHECK_IMAGE, CHECK_LOADER, CHECK_PLAN, evaluatePreflight } from './preflight.js';
-import { downloadEntry, loadCatalog, formatBytes, formatDuration, formatSpeed } from './images.js';
+import { triggerDownload, matchCatalogEntry, loadCatalog, formatBytes, formatDuration, formatSpeed } from './images.js';
 import {
   listUsbDevices,
   matchAfterReenumeration,
@@ -52,12 +52,9 @@ const ui = {
   pickImage: $('btn-pick-image'),
   fileImage: $('file-image'),
   versionList: $('version-list'),
-  fsaNote: $('fsa-note'),
-  downloadProgress: $('download-progress'),
-  downloadBar: $('download-bar'),
-  downloadText: $('download-text'),
-  downloadCancel: $('btn-download-cancel'),
-  downloadFallback: $('download-fallback'),
+  downloadHint: $('download-hint'),
+  downloadHintTitle: $('download-hint-title'),
+  hintPick: $('btn-hint-pick'),
   verifyProgress: $('verify-progress'),
   verifyBar: $('verify-bar'),
   verifyProgressText: $('verify-progress-text'),
@@ -84,6 +81,7 @@ const ui = {
   eraseConfirm: $('chk-erase-confirm'),
   writeButton: $('btn-write'),
   writeTitle: $('tile-write-title'),
+  writeChip: $('write-image-chip'),
   cancelWrite: $('btn-cancel-write'),
   writeProgress: $('write-progress'),
   writeBar: $('write-bar'),
@@ -144,7 +142,9 @@ const state = {
   },
   verifying: false,
   verifyPhase: null,
-  download: { controller: null, running: false, entry: null },
+  // A catalogue row the user asked the browser to download: the page is only
+  // waiting for them to pick the finished file back up with the local picker.
+  pendingDownload: null,
   eraseMode: 'none',
   eraseConfirmed: false,
   eraseChoiceNeeded: false,
@@ -508,7 +508,6 @@ function renderChoices() {
       button.type = 'button';
       button.className = 'brand-button';
       button.dataset.brand = brand;
-      button.disabled = state.download.running;
       button.setAttribute('aria-pressed', String(state.pickedBrand === brand));
 
       const logo = document.createElement('span');
@@ -546,7 +545,6 @@ function renderVersions() {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'version';
-      button.disabled = state.download.running;
 
       const body = document.createElement('span');
       body.className = 'version-body';
@@ -570,7 +568,7 @@ function renderVersions() {
 
       button.addEventListener('click', () => {
         closeDialog(ui.imageDialog);
-        if (entry.url) downloadCatalogEntry(entry);
+        if (entry.url) startPlainDownload(entry);
         else if (entry.page) window.open(entry.page, '_blank', 'noreferrer');
       });
       item.appendChild(button);
@@ -597,80 +595,39 @@ function closeDialog(dialog) {
   else dialog.removeAttribute('open');
 }
 
-async function downloadCatalogEntry(entry) {
-  if (state.download.running) return;
-  state.download.running = true;
-  state.download.entry = entry;
-  state.download.controller = new AbortController();
-  ui.downloadProgress.hidden = false;
-  ui.downloadFallback.hidden = true;
-  ui.downloadBar.style.width = '0%';
-  ui.downloadText.textContent = t('download.preparing', { label: entry.label });
-  ui.downloadCancel.disabled = false;
-  renderChoices();
+/**
+ * startPlainDownload asks the browser to download the image and leaves the
+ * page exactly where it was.
+ *
+ * This has to be a navigation (`<a download>`), not a `fetch`: the vendor
+ * origins send no `Access-Control-Allow-Origin`, so script cannot read those
+ * bytes at all (SIL-890). The browser's own downloader can, because it never
+ * hands the body to the page. The cost is that ~2 GiB lands in the download
+ * folder and the page must ask the user to pick it back up — which is exactly
+ * what the hint below the tiles says, for as long as it takes.
+ */
+function startPlainDownload(entry) {
+  const target = triggerDownload(entry);
+  if (!target) {
+    setBanner(t('download.noUrl'), 'warn');
+    log.warn('download', t('download.noUrlLog', { label: entry.label }));
+    return;
+  }
+  state.pendingDownload = entry;
+  renderDownloadHint();
   updateButtons();
-  log.info('download', t('download.started', { label: entry.label, url: entry.url }));
-
-  const result = await downloadEntry(entry, {
-    signal: state.download.controller.signal,
-    onProbe: (probe) => log.info('download', t('download.probed', { reason: probe.reason })),
-    onProgress: (snapshot) => {
-      if (!snapshot) return;
-      const percent = snapshot.percent ?? 0;
-      ui.downloadBar.style.width = `${percent}%`;
-      ui.downloadText.textContent = t('download.progress', {
-        received: formatBytes(snapshot.received),
-        total: snapshot.total ? formatBytes(snapshot.total) : t('download.unknownSize'),
-        speed: formatSpeed(snapshot.speed),
-        eta: t('time.remaining', { time: formatDuration(snapshot.etaSeconds) }),
-      });
-    },
-  });
-
-  state.download.running = false;
-  state.download.controller = null;
-  ui.downloadCancel.disabled = true;
-  renderChoices();
-  updateButtons();
-
-  if (result.ok) {
-    ui.downloadProgress.hidden = true;
-    log.info(
-      'download',
-      t('download.done', {
-        name: result.name,
-        size: formatBytes(result.received),
-        time: formatDuration(result.elapsedMs / 1000),
-      }),
-    );
-    await chooseImage(result.file, { source: 'download', catalog: entry });
-    return;
-  }
-
-  ui.downloadText.textContent = result.reason;
-  if (result.kind === 'cors' || result.kind === 'no-url') {
-    if (result.url) {
-      ui.downloadFallback.href = result.url;
-      ui.downloadFallback.hidden = false;
-    }
-    log.warn('download', result.reason);
-    setBanner(t('download.tabFallback'), 'warn');
-    return;
-  }
-  if (result.kind === 'cancelled') {
-    log.info('download', t('download.cancelled'));
-    ui.downloadProgress.hidden = true;
-    return;
-  }
-  log.error('download', result.reason);
-  setBanner(result.reason, 'error');
-  if (result.kind === 'unsupported') ui.downloadProgress.hidden = true;
+  setBanner('');
+  log.info('download', t('download.handedOff', { label: entry.label, url: target.url }));
+  // The user has to go and find the file; the local picker is the next move, so
+  // put it in reach without opening anything they did not ask for.
+  ui.downloadHint.scrollIntoView?.({ block: 'nearest' });
 }
 
-function cancelDownload() {
-  if (!state.download.running || !state.download.controller) return;
-  log.warn('download', t('download.cancelRequested'));
-  state.download.controller.abort();
+/** renderDownloadHint keeps the "wait for the browser" note on the page. */
+function renderDownloadHint() {
+  const entry = state.pendingDownload;
+  ui.downloadHint.hidden = !entry;
+  if (entry) ui.downloadHintTitle.textContent = entry.label;
 }
 
 async function pickLocalImage() {
@@ -706,16 +663,22 @@ function isZipPackage(file) {
 
 async function chooseImage(file, meta = {}) {
   if (!file) return;
+  // Coming back with the file the browser just downloaded: keep the catalogue
+  // row so the page still knows which official version this is.
+  const source = meta.source ?? 'local';
+  const downloaded = meta.catalog ?? (source === 'local' ? matchPendingDownload(file) : null);
   state.image = file;
   state.imageKind = isZipPackage(file) ? 'zip' : 'file';
   state.imageName = file.name;
-  state.imageLabel = meta.catalog?.label ?? file.name;
+  state.imageLabel = downloaded?.label ?? file.name;
   state.imageMeta = {
-    source: meta.source ?? 'local',
-    catalogId: meta.catalog?.id ?? null,
-    catalogSize: meta.catalog?.size ?? null,
-    sha256: meta.catalog?.sha256 ?? null,
+    source: downloaded ? 'download' : source,
+    catalogId: downloaded?.id ?? null,
+    catalogSize: downloaded?.size ?? null,
+    sha256: downloaded?.sha256 ?? null,
   };
+  state.pendingDownload = null;
+  renderDownloadHint();
   state.imageSize = file.size ?? 0;
   state.plan = null;
   state.writeDone = false;
@@ -726,6 +689,9 @@ async function chooseImage(file, meta = {}) {
   clearWriteFailure();
   setBanner('');
   renderImageSummary();
+  // The pick came from the dialog or the browser's own download; either way
+  // there is nothing left to ask, so the system sheet closes by itself.
+  closeDialog(ui.imageDialog);
   log.info(
     'image',
     t('image.selected', {
@@ -742,12 +708,24 @@ async function chooseImage(file, meta = {}) {
   await startVerification({});
 }
 
+/**
+ * matchPendingDownload recognises the file the browser finished downloading,
+ * so the page still knows *which* official system came back. The row the user
+ * asked for is checked first; otherwise the catalogue is searched by name or
+ * size, which also covers a version downloaded in an earlier session.
+ */
+function matchPendingDownload(file) {
+  const entries = state.catalog?.entries ?? [];
+  return matchCatalogEntry(entries, file, state.pendingDownload);
+}
+
 function renderImageSummary() {
   const hasImage = Boolean(state.image);
   if (!hasImage) {
     ui.imageTitle.textContent = t('tile.image');
     ui.imageSub.textContent = 'FydeOS · openFyde';
     ui.eraseRow.hidden = true;
+    ui.writeChip.hidden = true;
     return;
   }
   ui.imageTitle.textContent = state.imageLabel || state.imageName;
@@ -768,6 +746,11 @@ function renderImageSummary() {
     verdict,
   });
   ui.imageButton.dataset.tone = state.verification.status === 'failed' || state.plan?.ok === false ? 'error' : '';
+  // ③ carries the pick too: the system dialog is closed by now, and "what am I
+  // about to overwrite" must stay answerable without reopening it.
+  ui.writeChip.textContent = state.imageLabel || state.imageName;
+  ui.writeChip.title = state.imageName && state.imageName !== state.imageLabel ? state.imageName : '';
+  ui.writeChip.hidden = false;
   renderEraseChoice();
 }
 
@@ -1438,9 +1421,9 @@ function updateButtons(precomputed) {
   ui.authorize.hidden = state.deviceRows.length > 0;
   ui.authorize.disabled = busy || !supported;
   ui.refresh.disabled = busy || !state.ready;
-  ui.pickImage.disabled = busy || state.download.running;
+  ui.pickImage.disabled = busy;
   ui.fileImage.disabled = state.ufRunning;
-  ui.downloadCancel.disabled = !state.download.running;
+  ui.hintPick.disabled = busy;
   ui.writeButton.disabled = !result.canWrite;
   ui.writeButton.dataset.state = state.ufRunning ? 'running' : state.writeDone ? 'done' : '';
   ui.writeTitle.textContent = state.ufRunning
@@ -1453,9 +1436,6 @@ function updateButtons(precomputed) {
   ui.eraseMode.disabled = state.ufRunning;
   ui.eraseConfirm.disabled = state.ufRunning;
 
-  for (const button of document.querySelectorAll('[data-download-id]')) {
-    button.disabled = state.download.running;
-  }
   renderCtaHint(result);
 }
 
@@ -1646,7 +1626,7 @@ function wireEvents() {
     if (file) chooseImage(file, { source: 'local' });
     event.target.value = '';
   });
-  ui.downloadCancel.addEventListener('click', cancelDownload);
+  ui.hintPick.addEventListener('click', pickLocalImage);
   ui.authorize.addEventListener('click', authorize);
   ui.reconnectAuth.addEventListener('click', async () => {
     await authorize();
@@ -1715,12 +1695,6 @@ async function main() {
   applyDocument();
   initLogPanel();
   log.info('app', t('app.started'));
-  const caps = {
-    save: typeof globalThis.showSaveFilePicker === 'function',
-    streams: typeof globalThis.ReadableStream === 'function' && typeof globalThis.WritableStream === 'function',
-  };
-  ui.fsaNote.textContent = caps.save && caps.streams ? '' : t('app.noStreamSave');
-  if (!caps.save) log.warn('download', t('pwa.noStreamLog'));
 
   checkSupport();
   initDropTarget();

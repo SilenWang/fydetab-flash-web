@@ -217,6 +217,34 @@ body.dragging #btn-image {
   white-space: nowrap;
 }
 
+/* The system picked in ① stays on screen in ③, so "what am I about to
+   overwrite" never needs the system dialog reopened to answer. */
+.tile-chip {
+  flex: none;
+  max-width: 42%;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--outline-strong);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 11.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile-flash[data-state="running"] .tile-chip,
+.tile-flash[data-state="done"] .tile-chip {
+  border-color: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+@media (max-width: 560px) {
+  .tile-chip { max-width: 36%; }
+}
+
 /* The flash tile is the only place the brand red appears. */
 #btn-image::after,
 #btn-device::after {
@@ -301,7 +329,25 @@ body.dragging #btn-image {
 
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.link { font-size: 12px; }
+/* ------------------------------------------------------------------- hint */
+
+/* A standing note, not a toast: it stays until the user picks the file the
+   browser downloaded. It never covers the tiles — ① stays usable above. */
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--info) 32%, var(--outline));
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--info) 6%, var(--surface));
+}
+
+.hint-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.hint-title { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.hint-body { font-size: 12px; color: var(--text-2); }
+
+.hint .btn { flex: none; }
 
 /* ----------------------------------------------------------------- banner */
 

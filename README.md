@@ -28,9 +28,10 @@ WebAssembly, USB goes through WebUSB, and images never leave your machine.
 
 1. **Enter flash mode.** Power the tablet off, connect USB, hold **Vol+**, tap **Power**, then release Power
    and Vol+. In MASKROM the page sends Download Boot by itself — click no read button before that.
-2. **Pick a system.** Click the first tile, choose FydeOS or openFyde and a release, or use *Choose local file*
-   with an `.img` / official `.zip`. Vendor CDNs forbid direct reads (CORS), so downloads open in a new tab —
-   pick the file back up with *Choose local file*.
+2. **Pick a system.** Click the first tile, choose FydeOS or openFyde and a release — the browser starts its
+   own download and the page stays put with a standing *wait for the download, then choose the image* note.
+   When it finishes, pick the file back up from that note. An `.img` / official `.zip` you already have works
+   too, via *Choose local file*.
 3. **Connect the device.** Click the second tile and select the `0x2207` device in the browser prompt.
 4. **Verify.** Parsing, PARM CRC, RKAF CRC and whole-image MD5 run by themselves; one line shows the verdict.
 5. **Flash.** If the image leaves storage uncovered, say what to do with the tail, then click *Start flash*.

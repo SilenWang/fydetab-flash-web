@@ -111,7 +111,7 @@ pixi run test            # web/app/test/uf-zip.test.mjs 里 "a zip package plans
 
 ## 4. 出错时怎么带着证据来
 
-页面底部 **日志** 卡片里的「导出」给出 NDJSON：把镜像选择与下载、CORS 探测、校验逐项结果与耗时、
+页面底部 **日志** 卡片里的「导出」给出 NDJSON：把镜像选择与下载、校验逐项结果与耗时、
 设备插拔、命令、uf 进度、每一次 USB 传输、zip 统计（读了多少、回退重解几次、峰值缓冲）写成一份文件下载下来。
 NDJSON 的形状与 CLI 的 `uf --log` 一致，可以直接贴到 issue 里。
 

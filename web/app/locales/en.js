@@ -26,9 +26,6 @@ export default {
   'image.zipStats': 'Package decoded {size} ({reads} reads)',
   'worker.ignored': 'Ignoring message {type}',
   'app.bootFailed': 'The page could not start: {message}',
-  'app.noStreamSave':
-    'This browser cannot download official images directly. Pick a local file under “Choose an image”, or use desktop Chrome / Edge.',
-
   // -------------------------------------------------------------- tiles
   'tile.image': 'Choose an image',
   'tile.device': 'Choose a device',
@@ -94,15 +91,11 @@ export default {
   'image.verdict.quick': 'Quick check passed',
 
   // ----------------------------------------------------------- download
-  'download.preparing': 'Preparing to download {label}…',
-  'download.started': 'Downloading: {label} ← {url}',
-  'download.probed': 'Probe: {reason}',
-  'download.unknownSize': 'unknown size',
-  'download.progress': '{received} / {total} · {speed} · {eta}',
-  'download.done': 'Downloaded: {name} · {size} · took {time}',
-  'download.tabFallback': 'Downloading in a new tab; once it finishes, pick the local file under “Choose an image”.',
-  'download.cancelled': 'Download cancelled',
-  'download.cancelRequested': 'Cancelling the download…',
+  'download.hintBody': 'Wait for the browser to finish downloading, then choose the image manually.',
+  'download.hintPick': 'Choose the image',
+  'download.noUrl': 'This version has no download link: get it from the release page, then choose the local file.',
+  'download.noUrlLog': '{label}: the catalogue has no download link',
+  'download.handedOff': 'Handed to the browser: {label} ← {url}',
   'download.pickerUnavailable': 'The file picker is unavailable ({error}); falling back to a plain file input',
   'download.pickerDescription': 'Rockchip image',
 
@@ -190,7 +183,6 @@ export default {
   'action.install': 'Install',
   'action.reload': 'Reload',
   'action.pickLocal': 'Choose a local file',
-  'action.browserDownload': 'Browser download',
   'cta.running': '{percent}% · do not unplug',
   'cta.preparing': 'Preparing the write…',
   'cta.pickImage': 'Choose an image first',
@@ -217,7 +209,6 @@ export default {
   'dialog.connectTitle': 'Connect a device',
   'dialog.connectSub': 'Plug the Fydetab Duo into this computer with a USB cable',
   'dialog.wipeNote': 'Flashing erases the system already on the device',
-  'progress.download': 'Download',
   'progress.verify': 'Verify',
   'footer.source': 'Firmware comes from the official FydeOS and openFyde release pages.',
 
@@ -235,8 +226,6 @@ export default {
   'pwa.newVersion': ' · new version',
   'pwa.canInstall': 'Can be installed',
   'pwa.installedLog': 'Installed to the desktop',
-  'pwa.noStreamLog': 'The browser cannot stream to disk: official images must be downloaded manually',
-
   // ------------------------------------------------------------- support
   'support.noWebusb': 'This browser has no WebUSB. Open the page in desktop Chrome / Edge.',
   'support.insecure': 'WebUSB needs https or localhost.',
@@ -365,25 +354,6 @@ export default {
   'images.catalog.noFetch': 'No fetch: the image catalogue cannot be read',
   'images.catalog.http': 'Could not read the image catalogue: HTTP {status}',
   'images.catalog.fetchFailed': 'Could not read the image catalogue: {error}',
-  'images.advice.chromium':
-    'This browser lacks the File System Access API (streaming to disk): use desktop Chrome / Edge, or download manually and use “Choose a local file”.',
-  'images.badEntry': 'invalid catalogue entry',
-  'images.noUrl.withPage':
-    'This catalogue entry has no direct link: get it from the vendor download page, or use the link on the right.',
-  'images.noUrl.plain': 'This catalogue entry has no direct link: download it manually and use “Choose a local file”.',
-  'images.picker.cancelled': 'Save location selection cancelled.',
-  'images.picker.failed': 'Could not open the save location picker: {error}',
-  'images.transfer.noBody': 'The response has no body: it cannot be streamed to disk.',
-  'images.transfer.failed': 'Download failed: {error}',
-  'images.probe.sameOrigin': 'Same-origin file: the browser can read it directly.',
-  'images.probe.noFetch': 'No fetch: this address cannot be probed.',
-  'images.probe.cors':
-    'The browser was blocked by CORS (fetch failed): {error}. The server needs to send Access-Control-Allow-Origin.',
-  'images.probe.rejected': 'The server refused the probe request (HEAD {head} / GET {get}).',
-  'images.probe.noAcao':
-    'The response has no Access-Control-Allow-Origin: the browser cannot read it, opening it in a new tab instead.',
-  'images.probe.allowed': 'The server allows cross-origin reads (Access-Control-Allow-Origin: {origin}).',
-
   // ---------------------------------------------------------------- time
   'time.lessThanSecond': '<1s',
   'time.seconds': '{count}s',
