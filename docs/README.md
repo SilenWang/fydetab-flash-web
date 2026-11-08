@@ -29,4 +29,7 @@
 | [m4b-ui.md](m4b-ui.md) | 页面设计：选系统 / 设备 / 日志三块、版本清单、下载与校验策略 |
 | [99-rockchip-webusb.rules](99-rockchip-webusb.rules) | Linux udev 规则（可直接安装） |
 
-项目入口见仓库根目录的 [README](../README.md)。
+界面截图在 `docs/images/web-ui/`，6 张（空状态、版本对话框、写入中、完成、暗色、390px 窄屏），
+README 与 [usage-web.md](usage-web.md) 都从这里引用。
+
+项目入口见仓库根目录的 [README](../README.md)（英文）与 [README.zh-CN.md](../README.zh-CN.md)（中文）。

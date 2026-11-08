@@ -132,6 +132,17 @@ docs/m4b-ui.md              页面结构：下载/校验/设备/写入、CORS �
 trace 的工具（M1 的回归数据就是从它导出的），页面显著标注“只读，不会写入设备”。它的传输、命令和导出格式
 见 `web/probe/` 源码与 [protocol-notes.md](protocol-notes.md) 第 1–8 节。
 
+## 参考项目
+
+协议与格式的实现以这些项目的源码为准，本仓库只借用事实与常量，不复制代码：
+
+- [rockchip-linux/rkdeveloptool](https://github.com/rockchip-linux/rkdeveloptool)（GPL-2.0）：命令码、
+  CBW/CSW 布局、vendor request、RKBOOT 容器、CRC 与 GPT 常量。
+- [TheGammaSqueeze/rk_image_tool](https://github.com/TheGammaSqueeze/rk_image_tool)：parameter 解析、
+  IDB 约定与 GPT 几何。
+- [suyulin/afptool-rs](https://github.com/suyulin/afptool-rs)：RKAF 尾 CRC、32 位长度回绕与 PARM 包装。
+- [WebUSB 规范](https://wicg.github.io/webusb/)：浏览器侧的设备访问模型。
+
 ## 相关文档
 
 - 第一次使用：[quickstart.md](quickstart.md)
