@@ -104,7 +104,7 @@ export function createWebUSBHost(usb = globalThis.navigator?.usb) {
       device = handles.get(handle);
     }
     if (!device) {
-      throw new Error(`设备不在已授权列表里（handle ${handle}）；设备重新枚举后需要再次点“授权设备”`);
+      throw new Error(`设备不在已授权列表里（handle ${handle}）；设备重新枚举后需要再次点“连接设备”`);
     }
     const iface = findRockusbInterface(device);
     if (!iface) throw new Error('设备没有 bulk IN + bulk OUT 接口对，不像 rockusb 设备');

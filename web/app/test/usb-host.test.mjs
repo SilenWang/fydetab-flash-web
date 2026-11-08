@@ -172,7 +172,7 @@ test('vendor control OUT uses the WebUSB setup object', async () => {
 test('opening an unknown handle explains the re-authorization step', async () => {
   const host = createWebUSBHost(fakeUsb([fakeDevice()]));
   await host.list();
-  await assert.rejects(host.open(1, 'stale-handle'), /授权设备/);
+  await assert.rejects(host.open(1, 'stale-handle'), /连接设备/);
 });
 
 test('transfers on a DevNo without an open session fail loudly', async () => {

@@ -23,12 +23,12 @@
 
 ## 2. 离线：缓存了什么，为什么可以不联网
 
-`web/app/sw.js` 在安装时把运行页面所需的全部文件预缓存（`PRECACHE` 列表，24 项）：
+`web/app/sw.js` 在安装时把运行页面所需的全部文件预缓存（`PRECACHE` 列表，25 项）：
 
 ```
 ./                       ./index.html            ./styles.css
 ./app.js                 ./worker.js             ./bridge.js
-./usb-host.js            ./mock-host.js          ./mock-loader.js
+./usb-host.js            ./brand.js              ./mock-host.js
 ./preflight.js           ./protocol.js           ./zip.js
 ./zip-source.js          ./images.js             ./images.json
 ./devices.js             ./logs.js               ./verify.js
@@ -48,11 +48,10 @@
 ### 断网验证（页面里做，不碰设备）
 
 1. `pixi run dev` → 打开 `http://localhost:5173/app/`。
-2. 等 `#sw-note` 显示 **“离线：离线缓存已接管本页”**（首次加载后几百毫秒）。
+2. 等页面正常渲染（首次加载后几百毫秒，service worker 接管）。
 3. DevTools → Network → 勾 **Offline**（或者直接拔网线 / 关 Wi-Fi）。
-4. 刷新。页面必须仍然出现：标题、徽标 `core …` 变绿、下方面板显示 `离线（缓存可用）`。
-5. 再点一次“刷新（ld）”——会报没有设备（这是对的，WebUSB 与网络无关），但 core 仍然可用；
-   勾“演示模式（mock 设备）”能生成计划，说明 wasm 是从缓存里来的。
+4. 刷新。页面必须仍然出现：标题、三块卡片、底部操作栏；展开 **日志** 能看到「内核 … 就绪」。
+5. 这时选一个本地镜像仍能生成计划并校验，说明 wasm 是从缓存里来的（WebUSB 与网络无关）。
 
 > 想更接近真实场景：装成 PWA 后**先停掉 `pixi run dev`**，再从桌面图标启动。地址仍然可用是因为
 > service worker 在浏览器里拦截了这些请求。
@@ -67,7 +66,7 @@
 官方固件包通常是 `RK3588_..._update.zip`，里面是一个 3.8 GiB 的 `update.img`（RKFW 容器）。M4 不再
 要求你先解压：
 
-1. 第 1 块 **“镜像”** 里选 `.zip`（文件选择器与 `showOpenFilePicker` 都接受 `.zip`）。
+1. **镜像** 面板里选 `.zip`（文件选择器与 `showOpenFilePicker` 都接受 `.zip`）。
 2. 页面从**文件尾部**找 EOCD（必要时读 ZIP64 EOCD 记录），解析中央目录，只读几十 KiB。
 3. 依次对候选条目解出**前 4 个字节**，第一个以 `RKFW` 开头的条目就是镜像（裸 `RKAF` 只在没有
    RKFW 时兜底）。厂商包里的 `README.txt`、`MiniLoaderAll.bin`、驱动压缩包都会被跳过，页面会列出
@@ -84,18 +83,18 @@
 - 只支持 `stored` 与 `deflate` 两种压缩方式（官方包就是 deflate）；`lzma`/`bzip2` 等条目会被跳过并
   在页面里说明，而不是猜着解。
 - ZIP64（> 4 GiB 条目/偏移）已支持，中央目录里的 32 位字段被 `0xFFFFFFFF` 占满时走 ZIP64 扩展。
-- **不解压整个包就不校验 zip 的 CRC**；镜像自身的 RKAF CRC / 整镜像 MD5 / PARM CRC 由第 2 块的校验负责
+- **不解压整个包就不校验 zip 的 CRC**；镜像自身的 RKAF CRC / 整镜像 MD5 / PARM CRC 由校验阶段负责
   （页面默认做完整校验，策略与本机实测耗时见 [`docs/m4b-ui.md`](m4b-ui.md)）。ZIP 包的完整校验会多一次
   按需解压的成本，取样测速已经包含它。
 
 ### 计划对照（怎么自己验一遍）
 
 ```bash
-# 1) 造一份演示数据：合成 RKFW 镜像 + 包住它的 ZIP64 包（不下载任何厂商 blob）
+# 1) 造一份样张数据：合成 RKFW 镜像 + 包住它的 ZIP64 包（不下载任何厂商 blob）
 pixi run sample          # → web/samples/demo-update.img / .zip
 pixi run dev             # → http://localhost:5173/app/
 
-# 2) 页面里先选 demo-update.img，记下第 1 块“镜像”摘要与第 2 块校验结论里的每一项
+# 2) 页面里先选 demo-update.img，记下镜像摘要与校验结论里的每一项
 #    （items、传输字节、未覆盖尾部）；再选 demo-update.zip，对比同样的字段：
 #    两个计划必须逐字段相同，只有“文件:”一行显示包名。
 ```
@@ -112,7 +111,7 @@ pixi run test            # web/app/test/uf-zip.test.mjs 里 "a zip package plans
 
 ## 4. 出错时怎么带着证据来
 
-第 5 块 **“日志”** 里有 **导出 NDJSON** 与 **导出文本**：把镜像选择与下载、CORS 探测、校验逐项结果与耗时、
+页面底部 **日志** 卡片里的「导出」给出 NDJSON：把镜像选择与下载、CORS 探测、校验逐项结果与耗时、
 设备插拔、命令、uf 进度、每一次 USB 传输、zip 统计（读了多少、回退重解几次、峰值缓冲）写成一份文件下载下来。
 NDJSON 的形状与 CLI 的 `uf --log` 一致，可以直接贴到 issue 里。
 

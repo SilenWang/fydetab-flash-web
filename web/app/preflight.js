@@ -65,6 +65,18 @@ export function deviceMode(device) {
   return 'UNKNOWN';
 }
 
+/**
+ * imageFailureHint turns a verification verdict into the one sentence a user can
+ * act on: a checksum mismatch means "download it again", anything else means
+ * "this is not the file you want".
+ */
+export function imageFailureHint(verification) {
+  const summary = verification?.summary ?? '';
+  return /MD5|CRC|校验和/.test(summary)
+    ? '文件不完整（校验和对不上），请重新下载或重新选择镜像。'
+    : '这个文件不是可用的系统镜像，请选择官方下载的镜像。';
+}
+
 /** isMaskrom reports whether a listed device is a bare maskrom board. */
 export function isMaskrom(device) {
   if (!device) return false;
@@ -86,7 +98,7 @@ export function isLoader(device) {
  */
 export function readOnlyGate({ device, dbDone }) {
   if (!device) {
-    return { enabled: false, reason: '还没有授权设备：先点“授权设备”，再执行 Download Boot。' };
+    return { enabled: false, reason: '还没有授权设备：先点“连接设备”，再执行 Download Boot。' };
   }
   if (isLoader(device)) {
     return { enabled: true, reason: '设备已在 LOADER：只读信息可以安全读取。' };
@@ -137,25 +149,26 @@ export function evaluatePreflight(input = {}) {
   if (!verification || verification.status === 'none') {
     items.push({
       id: CHECK_IMAGE,
-      label: '镜像已校验（结构 + 校验和）',
+      label: '镜像已校验',
       status: 'pending',
-      detail: '还没有校验镜像：在第 2 块点“开始校验”，或重新选择镜像让它自动开始。',
+      detail: '重新选一次镜像就会自动开始。',
     });
   } else if (verification.status === 'fail' || verification.status === 'failed') {
     items.push({
       id: CHECK_IMAGE,
-      label: '镜像已校验（结构 + 校验和）',
+      label: '镜像已校验',
       status: 'fail',
-      detail: `校验未通过：${verification.summary || '有结构性错误或校验和不匹配'}`,
+      // The raw parser error goes to the log; the page says what to do about it.
+      detail: imageFailureHint(verification),
     });
   } else {
     items.push({
       id: CHECK_IMAGE,
-      label: '镜像已校验（结构 + 校验和）',
+      label: '镜像已校验',
       status: 'pass',
       detail: verification.full
-        ? `完整校验通过：${verification.summary || '结构与整镜像校验和一致'}`
-        : `快速校验通过：${verification.summary || '结构与 PARM CRC 通过'}——未做完整校验（整镜像 MD5 / RKAF CRC 未运行）。`,
+        ? `完整校验通过：${verification.summary || '结构与校验和一致'}`
+        : `快速校验通过：${verification.summary || '结构与 PARM CRC 通过'}——未做完整校验。`,
     });
   }
 
@@ -163,32 +176,30 @@ export function evaluatePreflight(input = {}) {
   if (!device) {
     items.push({
       id: CHECK_MASKROM,
-      label: '设备在 maskrom（2207:350b，bcdUSB bit0=0）',
+      label: '设备已连接',
       status: 'pending',
-      detail: '还没有已授权设备：点“授权设备”并在浏览器弹窗里选择 0x2207 设备。',
+      detail: '点「连接设备」，在弹出的窗口里选 Rockchip 设备。',
     });
   } else if (isLoader(device)) {
     items.push({
       id: CHECK_MASKROM,
-      label: '设备在 maskrom（2207:350b，bcdUSB bit0=0）',
+      label: '设备已连接',
       status: 'pass',
-      detail: `设备已重新枚举为 LOADER（Pid=0x${(device.productId ?? 0).toString(16)}），db 已经完成过，可以直接写。`,
+      detail: `设备已进入 LOADER（Pid=0x${(device.productId ?? 0).toString(16)}），可以直接写。`,
     });
   } else if (isMaskrom(device)) {
     items.push({
       id: CHECK_MASKROM,
-      label: '设备在 maskrom（2207:350b，bcdUSB bit0=0）',
+      label: '设备已连接',
       status: 'pass',
-      detail: `DevNo=${device.devNo} Pid=0x${(device.productId ?? 0).toString(16)}，bcdUSB 0x${(device.bcdUSB ?? 0)
-        .toString(16)
-        .padStart(4, '0')}（bit0=0）。`,
+      detail: `maskrom · DevNo=${device.devNo} · Pid=0x${(device.productId ?? 0).toString(16)}。`,
     });
   } else {
     items.push({
       id: CHECK_MASKROM,
-      label: '设备在 maskrom（2207:350b，bcdUSB bit0=0）',
+      label: '设备已连接',
       status: 'fail',
-      detail: '设备不在 maskrom 也不在 LOADER：重新拔插电源进 maskrom，再点 ld。',
+      detail: '设备模式未知：重新上电后刷新。',
     });
   }
 
@@ -196,34 +207,30 @@ export function evaluatePreflight(input = {}) {
   if (!loader) {
     items.push({
       id: CHECK_LOADER,
-      label: 'loader 与镜像 chip 匹配（默认用镜像自带 loader）',
-      status: input.hasImage ? 'pending' : 'pending',
-      detail: input.hasImage ? '先点“生成写入计划”，页面会从镜像 RKFW 头切出 loader 并校验。' : '还没有选择镜像。',
+      label: '引导程序与镜像匹配',
+      status: 'pending',
+      detail: input.hasImage ? '正在从镜像里取出引导程序。' : '先选一个镜像。',
     });
   } else if (loader.chipCheck === 'mismatch') {
     items.push({
       id: CHECK_LOADER,
-      label: 'loader 与镜像 chip 匹配（默认用镜像自带 loader）',
+      label: '引导程序与镜像匹配',
       status: 'fail',
-      detail: `loader 是为 ${loader.chip || '?'} 构建的，镜像是 ${loader.imageChip || '?'} 的：错配的 loader 会在 index 0 被 BootROM 拒收。`,
+      detail: `引导程序是 ${loader.chip || '?'} 的，镜像是 ${loader.imageChip || '?'} 的：错配的引导程序会在 index 0 被拒收。`,
     });
   } else if (loader.chipCheck === 'ok') {
     items.push({
       id: CHECK_LOADER,
-      label: 'loader 与镜像 chip 匹配（默认用镜像自带 loader）',
+      label: '引导程序与镜像匹配',
       status: 'pass',
-      detail: `${loader.source === 'file' ? '用户指定（非镜像自带）' : '镜像自带'} · ${loader.chip} · ${formatBytes(
-        loader.length,
-      )} · sha256 ${String(loader.sha256 || '').slice(0, 12)}… · 构建 ${loader.buildTime || 'unknown'}`,
+      detail: `${loader.source === 'file' ? '手动指定' : '镜像自带'} · ${loader.chip} · ${formatBytes(loader.length)}`,
     });
   } else {
     items.push({
       id: CHECK_LOADER,
-      label: 'loader 与镜像 chip 匹配（默认用镜像自带 loader）',
+      label: '引导程序与镜像匹配',
       status: 'warn',
-      detail: `loader 或镜像没有 chip 字段，无法比对（loader ${loader.chip || '?'} / 镜像 ${
-        loader.imageChip || '?'
-      }）。确认这份镜像确实属于这台机器再继续。`,
+      detail: `镜像缺少芯片信息，无法比对（${loader.chip || '?'} / ${loader.imageChip || '?'}）：确认这是 Fydetab Duo 的镜像。`,
     });
   }
 
@@ -231,36 +238,32 @@ export function evaluatePreflight(input = {}) {
   if (!facts) {
     items.push({
       id: CHECK_PLAN,
-      label: '写入计划与 parameter 一致，未覆盖尾部已显式选择',
+      label: '写入内容已排好',
       status: 'pending',
-      detail: '还没有计划：选择镜像后点“生成写入计划”。',
+      detail: '选择镜像后会自动排好。',
     });
   } else if (!(facts.items > 0)) {
     items.push({
       id: CHECK_PLAN,
-      label: '写入计划与 parameter 一致，未覆盖尾部已显式选择',
+      label: '写入内容已排好',
       status: 'fail',
-      detail: '计划里没有可写 item：确认镜像是完整的 update.img（RKFW + RKAF + parameter）。',
+      detail: '镜像里没有可写的内容：确认这是完整的整机镜像。',
     });
   } else if (facts.uncoveredTails > 0 && !eraseConfirmed) {
     items.push({
       id: CHECK_PLAN,
-      label: '写入计划与 parameter 一致，未覆盖尾部已显式选择',
+      label: '写入内容已排好',
       status: 'fail',
-      detail: `计划 ${facts.items} 项、共 ${formatBytes(facts.totalBytes)}；${facts.uncoveredTails} 个分区尾部未覆盖（${formatBytes(
-        facts.uncoveredBytes,
-      )}，含 ${facts.uncoveredPartitions ?? facts.uncoveredParts ?? '?'}）——请在下面显式选择处置并打勾。`,
+      detail: `还有 ${formatBytes(facts.uncoveredBytes)} 空间没被覆盖（${facts.uncoveredPartitions ?? facts.uncoveredParts ?? '?'}）：请显式选择处理方式并勾选确认。`,
     });
   } else {
     items.push({
       id: CHECK_PLAN,
-      label: '写入计划与 parameter 一致，未覆盖尾部已显式选择',
+      label: '写入内容已排好',
       status: 'pass',
-      detail: `计划 ${facts.items} 项、共 ${formatBytes(facts.totalBytes)}；未覆盖 ${formatBytes(
+      detail: `${facts.items} 项 · ${formatBytes(facts.totalBytes)} · 未覆盖 ${formatBytes(
         facts.uncoveredBytes,
-      )}（${facts.uncoveredPartitions ?? facts.uncoveredParts ?? '无'}）→ ${facts.eraseMode}${
-        facts.uncoveredTails > 0 ? '（已确认）' : '（没有未覆盖区间）'
-      }。`,
+      )}（${facts.uncoveredPartitions ?? facts.uncoveredParts ?? '无'}）→ ${facts.eraseMode}。`,
     });
   }
 
@@ -269,30 +272,30 @@ export function evaluatePreflight(input = {}) {
   if (isLoader(device)) {
     items.push({
       id: CHECK_FIRST_COMMAND,
-      label: '上电后第一条命令是 db（在 db 前不发任何 CBW）',
+      label: '可直接进入刷写模式',
       status: 'pass',
-      detail: '设备已经是 LOADER，db 完成过；本次写入不会再发给 maskrom 的 CBW。',
+      detail: '设备已经是 LOADER，本次写入不需要再发 Download Boot。',
     });
   } else if (isMaskrom(device) && loaderReady) {
     items.push({
       id: CHECK_FIRST_COMMAND,
-      label: '上电后第一条命令是 db（在 db 前不发任何 CBW）',
+      label: '可直接进入刷写模式',
       status: 'pass',
-      detail: '写入流程的第一步就是 db；页面在 db 成功前禁用了“读取设备信息”等会发 CBW 的按钮。',
+      detail: '写入的第一步就是 Download Boot。',
     });
   } else if (isMaskrom(device)) {
     items.push({
       id: CHECK_FIRST_COMMAND,
-      label: '上电后第一条命令是 db（在 db 前不发任何 CBW）',
+      label: '可直接进入刷写模式',
       status: 'fail',
-      detail: '还没有可用的、与镜像匹配的 loader，db 无法作为第一条命令执行。',
+      detail: '镜像里没有可用的引导程序，无法进入刷写模式。',
     });
   } else {
     items.push({
       id: CHECK_FIRST_COMMAND,
-      label: '上电后第一条命令是 db（在 db 前不发任何 CBW）',
+      label: '可直接进入刷写模式',
       status: 'pending',
-      detail: '设备状态未确定：授权设备后先 ld。',
+      detail: '连接设备后会自动确认。',
     });
   }
 

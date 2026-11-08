@@ -25,3 +25,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Local screenshot scratch (used in reviews, not shipped)
+shots/

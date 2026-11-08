@@ -300,7 +300,7 @@ test('the write gate requires a verified image (M4b)', () => {
   // No verification yet: pending, not failed, and the button stays off.
   const missing = preflight({ ...base, verification: null });
   assert.equal(byId(missing, CHECK_IMAGE).status, 'pending');
-  assert.match(byId(missing, CHECK_IMAGE).detail, /还没有校验/);
+  assert.match(byId(missing, CHECK_IMAGE).detail, /重新选一次镜像/);
   assert.equal(missing.canWrite, false);
   assert.equal(missing.ready, false);
 
@@ -311,7 +311,7 @@ test('the write gate requires a verified image (M4b)', () => {
   });
   assert.equal(byId(failed, CHECK_IMAGE).status, 'fail');
   assert.ok(failed.blocking.includes(CHECK_IMAGE));
-  assert.match(byId(failed, CHECK_IMAGE).detail, /整镜像 MD5 不匹配/);
+  assert.match(byId(failed, CHECK_IMAGE).detail, /重新下载/);
   assert.equal(failed.canWrite, false);
 
   // A quick verdict may write, but the item has to say the full scan did not run.

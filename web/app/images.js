@@ -44,6 +44,8 @@ export function normaliseEntry(raw, index) {
   return {
     id,
     label,
+    brand: nullableString(raw.brand),
+    released: nullableString(raw.released),
     device: nullableString(raw.device),
     version: nullableString(raw.version),
     file: nullableString(raw.file),
