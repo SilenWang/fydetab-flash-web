@@ -5,7 +5,7 @@
 | 文档 | 内容 |
 |---|---|
 | [quickstart.md](quickstart.md) | 安装版 PWA 刷 Fydetab Duo：安装、进刷写模式、刷写、失败处理、日志 |
-| [usage-web.md](usage-web.md) | 页面使用：真实设备流程、无设备演示、离线验证、驱动与授权 |
+| [usage-web.md](usage-web.md) | 页面使用：一次完整刷写、离线、驱动与授权 |
 | [webusb-drivers.md](webusb-drivers.md) | macOS / Linux / Windows 的 WebUSB 与驱动说明 |
 | [pwa-offline.md](pwa-offline.md) | 安装、离线缓存、官方 `.zip` 直读、日志导出 |
 | [limitations.md](limitations.md) | 已知限制、待真机复验项、历史验收清单 |
@@ -26,7 +26,7 @@
 |---|---|
 | [protocol-notes.md](protocol-notes.md) | rockusb 传输、CBW/CSW、只读命令、Download Boot、loader 错配实测 |
 | [rkfw-rkaf-format.md](rkfw-rkaf-format.md) | RKFW / RKAF / parameter 格式、CRC、GPT 计划、核对方法 |
-| [m4b-ui.md](m4b-ui.md) | 页面的下载/校验/设备/写入、CORS 与 2 分钟规则 |
+| [m4b-ui.md](m4b-ui.md) | 页面设计：选系统 / 设备 / 日志三块、版本清单、下载与校验策略 |
 | [99-rockchip-webusb.rules](99-rockchip-webusb.rules) | Linux udev 规则（可直接安装） |
 
 项目入口见仓库根目录的 [README](../README.md)。

@@ -5,14 +5,14 @@
 
 面向 Fydetab Duo（RK3588）。不需要后端、不上传镜像、不安装额外工具：选本地 `.img` 或官方 `.zip`
 即可校验并刷写，也可以安装成离线 PWA。当前已实现 M0–M4b（只读探针、Go/WASM 核心、离线计划、
-写入状态机、WebUSB 写入与页面门禁、PWA/离线/zip 直读、工作台单页），真机端到端验证仍由后续阶段负责。
+写入状态机、WebUSB 写入与页面门禁、PWA/离线/zip 直读、面向普通用户的单页），真机端到端验证仍由后续阶段负责。
 
 ## 文档
 
 | 我想…… | 从这里开始 |
 |---|---|
 | 第一次刷机 | [docs/quickstart.md](docs/quickstart.md) |
-| 了解页面怎么用（真机 / 演示模式） | [docs/usage-web.md](docs/usage-web.md) |
+| 了解页面怎么用 | [docs/usage-web.md](docs/usage-web.md) |
 | 解决驱动、授权、离线安装问题 | [docs/webusb-drivers.md](docs/webusb-drivers.md)、[docs/pwa-offline.md](docs/pwa-offline.md) |
 | 参与开发（环境、构建、测试） | [docs/development.md](docs/development.md) |
 | 看架构、代码地图与阶段记录 | [docs/architecture.md](docs/architecture.md) |

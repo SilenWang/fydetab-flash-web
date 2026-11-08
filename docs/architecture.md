@@ -5,14 +5,14 @@
 
 当前阶段：M1（Go/WASM 核心 + WebUSB bridge + `ld`/`cd`/`sd` + Download Boot + 只读信息）、
 M2（离线 `uf --dry-run` 计划）、M3a（写入层 + `uf` 状态机，mock/回放验证）、M3b（WebUSB 写入绑定 +
-真机前自检）、M4（可安装 PWA + 离线 + 官方 `.zip` 直读），以及 M4b（工作台单页：镜像下载 / 校验 /
-设备 / 写入，日志与诊断收进抽屉）。
+真机前自检）、M4（可安装 PWA + 离线 + 官方 `.zip` 直读），以及 M4b（单列单页：选系统 / 设备 / 日志，
+给普通用户用）。
 
 M3b 之后浏览器里已经有一条完整的写入路径：从 `update.img` 的 RKFW 头里切出**镜像自带的 loader** 做
 Download Boot，再用 `internal/uf` 的同一套状态机执行 `gpt → wl → rd`；写入前必须通过页面的逐项自检。
 M4 把这一页变成可以装到桌面、断网也能打开的应用，并且允许直接选择官方 `.zip`（ZIP64 + 流式 deflate，
-不落地 3.8 GiB）。M4b 把杂乱的调试面板收成一条普通用户能看懂的主流程：**下载或选镜像 → 校验 → 选设备 →
-刷写 → 看日志**，原来的 trace/命令/只读信息进“高级 / 诊断”折叠区。真机端到端由后续 stage 负责。
+不落地 3.8 GiB）。M4b 把调试面板收成一条普通用户能看懂的主流程：**选系统 → 选设备 → 刷写 → 看日志**，
+页面上不再有协议名、trace 或演示入口。真机端到端由后续 stage 负责。
 
 ## 页面与运行时
 
@@ -32,9 +32,8 @@ main thread (app.js)                        worker (worker.js)
 - **镜像读取**：页面把 `File` 交给 worker，worker 包装成 `{name, size, read(offset, length)}`；Go 用
   `rkfw.OpenReaderAt` 分块读（头部、RKAF 表、parameter、loader、写入块），多 GiB 的镜像不会被整体搬进
   wasm 内存。`internal/imageplan` 是 CLI 与页面共用的**唯一** planner。
-- **演示模式**把 RPC host 换成 worker 内的 mock 设备（`web/app/mock-host.js`），无需硬件即可演示
-  `ld → info 被拒绝 → db → 重新枚举 → info`；写入演示则用 wasm 内的模拟器（`uf.SimConnector`），
-  同一套状态机，不访问 USB。
+- **mock 设备只在测试里**：`web/app/mock-host.js` 与 wasm 内的 `uf.SimConnector` 让单元测试在没有硬件的
+  情况下走完 `ld → info 被拒绝 → db → 重新枚举 → info` 与整段写入，页面本身从不实例化它们。
 
 ## 阶段记录
 
@@ -46,7 +45,7 @@ main thread (app.js)                        worker (worker.js)
 | M3a | 写入层 + `uf` 状态机，在 mock 设备与录制 trace 上验证 | [cli.md](cli.md)、[uf-write-path.md](uf-write-path.md) |
 | M3b | WebUSB 写入绑定 + 打开设备前的 loader 自检与页面门禁 | [uf-write-path.md §9](uf-write-path.md#9-webusb-绑定与-loader-自检m3b) |
 | M4 | 可安装 PWA、离线缓存、官方 `.zip` 直读 | [pwa-offline.md](pwa-offline.md) |
-| M4b | 工作台单页（镜像 / 设备 / 写入 + 日志抽屉） | [m4b-ui.md](m4b-ui.md) |
+| M4b | 单列单页（选系统 / 设备 / 日志），只留面向用户的主流程 | [m4b-ui.md](m4b-ui.md) |
 
 阶段边界：M4 只改页面与工具链，`internal/` 的写入语义与 `web/app/preflight.js` 的门禁条件未动；M4b 只改
 页面、下载/校验的前端编排与一处**新增的** wasm 导出（`ufVerify`），`ufPlan` / `ufRun` / `ufCancel` 与写入
@@ -69,8 +68,8 @@ main thread (app.js)                        worker (worker.js)
 - `cmd/wasm/`：`syscall/js` 导出（`bindBridge` / `exec` / `inspectLoader` / `ufPlan` / `ufRun` /
   `ufCancel` / `ufVerify` / `imageLoader` / `demoImage` / `close`）与 JS bridge 传输。`ufVerify` 是 M4b
   新增的：结构报告 + PARM CRC + 可选 RKAF CRC / 整镜像 MD5，并在读取器上挂进度回调。
-- `web/app/`：页面（镜像 / 设备 / 写入工作台 + 日志与诊断抽屉）。主线程 WebUSB host、module worker、mock 设备、
-  `preflight.js` 门禁、`images.js` 镜像清单与流式下载、`verify.js` 校验结论、`devices.js` 设备列表、
+- `web/app/`：页面（选系统 / 设备 / 日志三块）。主线程 WebUSB host、module worker、`preflight.js` 门禁、
+  `images.js` 镜像清单与流式下载、`brand.js` 官方品牌字形、`verify.js` 校验结论、`devices.js` 设备列表、
   `logs.js` 日志仓库。
 - `web/probe/`：M0 只读探针，保留下来用于抓 trace 与对照，不受后续阶段影响。
 - `cmd/genprotocol/`：把 Go 的命令表/常量生成到 `web/app/protocol.js` 与 `web/probe/protocol.js`。
@@ -81,14 +80,15 @@ main thread (app.js)                        worker (worker.js)
 pixi.toml / pixi.lock       依赖与任务（唯一入口）
 internal/rockusb/           只读协议子集、RKBOOT 解析、Download Boot、单测
 internal/device/            设备枚举与 shell（ld/desc/cd/sd/db/info）
-internal/imageplan/         唯一的镜像 planner + 镜像自带 loader 提取 + 演示镜像
-internal/uf/                写入状态机、IDB 模型、mock/回放、BridgeConnector、JSON 日志
+internal/imageplan/         唯一的镜像 planner + 镜像自带 loader 提取 + 测试用样张镜像
+internal/uf/                写入状态机、IDB 模型、mock/回放传输、BridgeConnector、JSON 日志
 cmd/uf/                     uf --dry-run 计划 + --mock/--replay 写入状态机
 cmd/wasm/                   Go/WASM 核心导出（shell + ufPlan/ufRun/ufCancel/ufVerify/imageLoader/demoImage）
 cmd/genprotocol/            生成 web/app/protocol.js 与 web/probe/protocol.js
-web/app/                    页面：工作台（镜像/设备/写入）+ 日志与诊断抽屉
+web/app/                    页面：选系统 / 设备 / 日志（单列，底部固定操作栏）
 web/app/images.js           镜像清单解析、CORS 探测、流式下载（File System Access API）
-web/app/images.json         官方镜像清单（版本/文件名/大小/sha256/URL）
+web/app/brand.js            FydeOS / openFyde 官方品牌字形（内联 SVG，跟随主题色）
+web/app/images.json         官方镜像清单（品牌/版本/大小/sha256/URL/发布页）
 web/app/verify.js           校验结论与阻断/警告规则、2 分钟预算
 web/app/devices.js          设备列表、模式判定与重新枚举匹配
 web/app/logs.js             分级日志仓库与 TXT/NDJSON 导出
@@ -101,14 +101,14 @@ web/probe/                  M0 只读探针（保留用于抓 trace 与对照）
 tools/serve.mjs             本地静态服务
 tools/build-wasm.mjs        构建 wasm 并拷贝匹配的 wasm_exec.js
 tools/zip-writer.mjs        测试/示例用的最小 zip 写入器（支持 ZIP64）
-tools/make-sample.mjs       生成 web/samples/ 的演示镜像与 zip
+tools/make-sample.mjs       生成 web/samples/ 的测试样张镜像与 zip（不参与页面）
 tools/make-icons.mjs        生成 PWA PNG 图标（无图像依赖）
 tools/demo-image/           把 imageplan.DemoImage 写成文件（供 sample 任务使用）
 .github/workflows/ci.yml    pixi run build + test
 .github/workflows/pages.yml 构建 web/ 并部署到 GitHub Pages
 docs/README.md              文档索引
-docs/quickstart.md          用户上手：安装、进 maskrom、刷写、救砖、日志导出
-docs/usage-web.md           页面使用：真实设备、演示模式、离线验证
+docs/quickstart.md          用户上手：安装、进刷写模式、刷写、救砖、日志导出
+docs/usage-web.md           页面使用：真实设备、离线、驱动与授权
 docs/cli.md                 uf 命令行：dry-run、mock、回放、日志、镜像片段
 docs/architecture.md        本文件：运行时架构、阶段记录、代码地图
 docs/development.md         开发环境、pixi 任务、构建产物与测试

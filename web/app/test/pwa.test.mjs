@@ -59,11 +59,31 @@ test('the page declares the manifest and the install surface', () => {
   assert.match(html, /<link rel="icon"/);
   assert.match(html, /name="theme-color"/);
   assert.match(html, /id="file-image"[^>]*accept="[^"]*\.zip/, 'the image picker must accept .zip');
-  assert.match(html, /id="drawer"/, 'the log / diagnostics drawer must exist');
+  assert.match(html, /id="version-dialog"/, 'the version picker must be a dialog');
   assert.match(html, /id="btn-write"/, 'the persistent action bar must own the write button');
+  assert.match(html, /id="log-body"/, 'the log panel must live on the page, not behind a drawer');
 
-  for (const id of ['btn-install', 'btn-reload-app', 'install-note', 'sw-note', 'net-badge', 'zip-summary', 'reconnect', 'reconnect-steps', 'btn-reconnect-auth', 'btn-export-log']) {
+  for (const id of ['btn-install', 'btn-reload-app', 'install-note', 'sw-note', 'reconnect', 'reconnect-steps', 'btn-reconnect-auth', 'btn-export-log', 'btn-toggle-log', 'image-choices']) {
     assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
+  }
+});
+
+test('the page offers no demo or mock surface', () => {
+  // The flasher is a consumer tool: a "演示模式" switch or a demo image entry
+  // would be a button that does nothing on a real bench, so the ids stay gone.
+  const html = read('index.html');
+  for (const id of ['chk-mock', 'btn-demo-image', 'btn-demo-loader', 'drawer', 'tab-diag']) {
+    assert.ok(!html.includes(`id="${id}"`), `index.html still exposes #${id}`);
+  }
+  const catalog = JSON.parse(read('images.json'));
+  assert.ok(Array.isArray(catalog.images) && catalog.images.length > 0);
+  assert.deepEqual(
+    [...new Set(catalog.images.map((entry) => entry.brand))].sort(),
+    ['fydeos', 'openfyde'],
+    'the catalogue is exactly the two official brands',
+  );
+  for (const entry of catalog.images) {
+    assert.ok(entry.version && entry.url, `${entry.id} needs a version and a direct url`);
   }
 });
 
@@ -95,7 +115,7 @@ test('the service worker precaches everything the app imports', () => {
   // Every local module the page or the worker imports must be in the list,
   // otherwise the offline boot fails at the first import.
   const imports = new Set();
-  for (const file of ['app.js', 'shell.js', 'worker.js', 'zip-source.js', 'bridge.js', 'preflight.js', 'usb-host.js', 'images.js', 'devices.js', 'logs.js', 'verify.js']) {
+  for (const file of ['app.js', 'brand.js', 'worker.js', 'zip-source.js', 'bridge.js', 'preflight.js', 'usb-host.js', 'images.js', 'devices.js', 'logs.js', 'verify.js']) {
     for (const match of read(file).matchAll(/from '\.\/([\w./-]+\.js)'/g)) imports.add(match[1]);
   }
   imports.add('worker.js');

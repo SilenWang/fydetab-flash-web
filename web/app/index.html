@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#fbfbfc" />
-    <title>Fydetab 刷写工具</title>
+    <title>Fydetab Duo 刷写工具</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icons/icon-192.png" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="./icons/icon-192.png" />
@@ -19,51 +19,25 @@
             <path d="M13 2 5 14h6l-1 8 8-12h-6l1-8Z" />
           </svg>
         </span>
-        <span class="brand-name">Fydetab <span class="brand-sub">刷写工具</span></span>
-      </div>
-
-      <div class="appbar-meta">
-        <span id="mode-badge" class="pill" data-mode="none">未连接</span>
-        <span id="core-badge" class="pill quiet" data-core="loading">内核加载中</span>
-        <span id="net-badge" class="pill quiet" data-net="online">在线</span>
-        <button id="btn-drawer" class="btn ghost small" type="button" aria-expanded="false" aria-controls="drawer">日志</button>
+        <span class="brand-name">Fydetab Duo 刷写</span>
       </div>
     </header>
 
     <div id="banner" class="banner" role="status" hidden></div>
 
-    <main id="main" class="board">
-      <section class="panel panel-image" aria-labelledby="h-image">
-        <header class="panel-head">
-          <h2 id="h-image">镜像</h2>
-          <a class="link" href="https://fydeos.io/download" target="_blank" rel="noreferrer">厂商下载页</a>
-        </header>
+    <main id="main" class="page">
+      <section class="card card-image" aria-labelledby="h-image">
+        <h2 id="h-image">选择系统</h2>
 
-        <label class="dropzone" id="dropzone" for="file-image" tabindex="0">
+        <div id="image-choices" class="choices">
+          <p class="muted">正在读取版本…</p>
+        </div>
+
+        <div class="file-row">
+          <span class="file-name" id="image-label">或使用本地镜像</span>
+          <button id="btn-pick-image" class="btn ghost small" type="button">选择文件</button>
           <input id="file-image" type="file" accept=".img,.bin,.zip,application/octet-stream,application/zip" />
-          <span class="dropzone-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 16V4m0 0L7 9m5-5 5 5" /><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-            </svg>
-          </span>
-          <span class="dropzone-main" id="image-label">拖入镜像，或点击选择文件</span>
-          <span class="dropzone-sub">支持 update.img 与官方 .zip</span>
-        </label>
-
-        <div class="row-actions">
-          <button id="btn-pick-image" class="btn secondary small" type="button">从文件管理器选择</button>
-          <button id="btn-demo-image" class="btn ghost small" type="button" hidden>载入演示镜像</button>
         </div>
-
-        <div class="section-head">
-          <h3>官方镜像</h3>
-          <span id="catalog-note" class="note"></span>
-        </div>
-        <div id="image-catalog" class="catalog"><p class="muted">正在读取镜像清单…</p></div>
-
-        <p id="fsa-note" class="note"></p>
-        <pre id="image-summary" class="meta" hidden></pre>
-        <pre id="zip-summary" class="meta" hidden></pre>
 
         <div id="download-progress" class="progress" hidden>
           <div class="track"><span id="download-bar" class="fill"></span></div>
@@ -71,79 +45,56 @@
             <p id="download-text" class="progress-text"></p>
             <span class="progress-actions">
               <button id="btn-download-cancel" class="btn ghost small" type="button">取消</button>
-              <a id="download-fallback" class="link" target="_blank" rel="noreferrer" hidden>新标签页打开</a>
+              <a id="download-fallback" class="link" target="_blank" rel="noreferrer" hidden>在新标签页下载</a>
             </span>
           </div>
         </div>
 
-        <div class="verify">
-          <div class="verify-head">
-            <h3>完整性</h3>
-            <span class="spacer"></span>
-            <label class="check-inline">
-              <input id="chk-full-verify" type="checkbox" checked />
-              <span>完整校验</span>
-            </label>
-            <button id="btn-verify" class="btn ghost small" type="button" disabled>校验</button>
-          </div>
-          <div id="verify-progress" class="progress" hidden>
-            <div class="track small"><span id="verify-bar" class="fill"></span></div>
-            <p id="verify-progress-text" class="progress-text"></p>
-          </div>
-          <p id="verify-hint" class="note"></p>
-          <ul id="verify-checks" class="checks compact"></ul>
-          <p id="verify-summary" class="status-line" data-tone=""></p>
+        <div id="verify-progress" class="progress" hidden>
+          <div class="track small"><span id="verify-bar" class="fill"></span></div>
+          <p id="verify-progress-text" class="progress-text"></p>
         </div>
+
+        <p id="image-summary" class="note" hidden></p>
+        <p id="fsa-note" class="note"></p>
       </section>
 
-      <section class="panel panel-device" aria-labelledby="h-device">
-        <header class="panel-head">
+      <section class="card card-device" aria-labelledby="h-device">
+        <div class="card-head">
           <h2 id="h-device">设备</h2>
-          <div class="panel-actions">
-            <button id="btn-authorize" class="btn primary small" type="button">连接设备</button>
-            <button id="btn-refresh" class="btn ghost small" type="button">刷新</button>
-          </div>
-        </header>
+          <span class="spacer"></span>
+          <button id="btn-refresh" class="btn ghost small" type="button" hidden>刷新</button>
+          <button id="btn-authorize" class="btn secondary small" type="button">连接设备</button>
+        </div>
 
         <div id="devices" class="devices"></div>
         <p id="device-selected" class="note"></p>
 
-        <div class="device-foot">
-          <span class="note">Fydetab Duo · RK3588</span>
-          <label class="check-inline">
-            <input id="chk-mock" type="checkbox" />
-            <span>演示模式</span>
-          </label>
-        </div>
-
         <div id="reconnect" class="reconnect" hidden>
-          <h4>设备已断开</h4>
+          <p class="reconnect-title">设备已断开</p>
           <ol id="reconnect-steps"></ol>
           <div class="row-actions">
-            <button id="btn-reconnect-auth" class="btn primary small" type="button">重新授权</button>
+            <button id="btn-reconnect-auth" class="btn secondary small" type="button">重新连接</button>
             <button id="btn-reconnect-dismiss" class="btn ghost small" type="button">稍后</button>
           </div>
         </div>
 
-        <div class="write-block">
-          <div class="section-head">
-            <h3>写入选项</h3>
-          </div>
-          <ul id="checklist" class="checks gates"></ul>
+        <div id="write-block" class="write-block">
+          <ul id="checklist" class="checks gates" hidden></ul>
 
-          <div class="erase-row">
-            <label class="field">
-              <span>分区尾部未覆盖部分</span>
-              <select id="erase-mode">
-                <option value="none">保持原内容</option>
-                <option value="fill">写 0xFF</option>
-                <option value="erase-lba">ERASE_LBA 擦除</option>
+          <div id="erase-row" class="erase-row" hidden>
+            <p id="erase-title" class="erase-title"></p>
+            <div class="erase-controls">
+              <select id="erase-mode" aria-label="没覆盖到的空间怎么处理">
+                <option value="none">保持原样</option>
+                <option value="fill">填 0xFF</option>
+                <option value="erase-lba">整段擦除</option>
               </select>
-            </label>
-            <label class="check-inline">
-              <input id="chk-erase-confirm" type="checkbox" />
-              <span>确认此处置</span>
-            </label>
+              <label class="check-inline">
+                <input id="chk-erase-confirm" type="checkbox" />
+                <span>就按这个处理</span>
+              </label>
+            </div>
           </div>
 
           <div id="write-failure" class="failure" hidden>
@@ -154,129 +105,60 @@
         </div>
       </section>
 
-      <footer class="board-foot">
-        协议实现基于 Rockchip
-        <a href="https://github.com/rockchip-linux/rkdeveloptool" target="_blank" rel="noreferrer">rkdeveloptool</a>（GPL-2.0）。
-        本页不分发厂商固件，也不含 loader blob。
+      <section class="card card-log" aria-labelledby="h-log">
+        <div class="card-head">
+          <h2 id="h-log">日志</h2>
+          <span id="log-count" class="note"></span>
+          <span class="spacer"></span>
+          <button id="btn-export-log" class="btn ghost small" type="button">导出</button>
+          <button id="btn-toggle-log" class="btn ghost small" type="button" aria-expanded="false">展开</button>
+        </div>
+        <div id="log-body" class="log-body" hidden>
+          <ol id="log-lines" class="log-lines" aria-live="polite"></ol>
+          <p id="log-empty" class="muted">还没有记录。</p>
+        </div>
+      </section>
+
+      <footer class="page-foot">
+        <p>
+          仅支持 Fydetab Duo（RK3588）·
+          <a href="https://github.com/rockchip-linux/rkdeveloptool" target="_blank" rel="noreferrer">rkdeveloptool</a>（GPL-2.0）
+        </p>
+        <p class="foot-actions">
+          <button id="btn-install" class="btn ghost small" type="button" hidden>安装到桌面</button>
+          <button id="btn-reload-app" class="btn ghost small" type="button" hidden>刷新页面</button>
+          <span id="install-note" class="note"></span>
+        </p>
       </footer>
     </main>
 
     <div class="actionbar">
-      <div id="write-progress" class="action-progress" hidden>
+      <div class="action-progress" id="write-progress" hidden>
         <div class="track"><span id="write-bar" class="fill"></span></div>
       </div>
       <div class="action-inner">
         <div class="action-summary">
           <span id="action-image" class="action-label">未选择镜像</span>
           <span id="action-device" class="action-sub">未连接设备</span>
-          <p id="write-progress-text" class="action-progress-text"></p>
+          <p id="write-progress-text" class="action-sub" hidden></p>
         </div>
         <div class="action-buttons">
-          <button id="btn-cancel-write" class="btn ghost" type="button" disabled>取消</button>
+          <button id="btn-cancel-write" class="btn ghost" type="button" disabled hidden>取消</button>
           <button id="btn-write" class="btn primary lg" type="button" disabled>开始刷写</button>
         </div>
       </div>
     </div>
 
-    <div class="scrim" id="scrim" hidden></div>
-
-    <aside id="drawer" class="drawer" aria-label="日志与诊断" hidden>
-      <div class="drawer-head">
-        <div class="tabs" role="tablist">
-          <button id="tab-log" class="tab" type="button" role="tab" aria-selected="true" aria-controls="pane-log">日志</button>
-          <button id="tab-diag" class="tab" type="button" role="tab" aria-selected="false" aria-controls="pane-diag">诊断</button>
-        </div>
-        <button id="btn-drawer-close" class="btn ghost small" type="button">关闭</button>
+    <dialog id="version-dialog" class="dialog">
+      <div class="dialog-head">
+        <h2 id="version-title">选择版本</h2>
+        <button id="btn-close-versions" class="btn ghost small" type="button">关闭</button>
       </div>
+      <ul id="version-list" class="versions"></ul>
+    </dialog>
 
-      <section id="pane-log" class="pane" role="tabpanel" aria-labelledby="tab-log">
-        <div class="log-toolbar">
-          <span id="log-count" class="note">0 条</span>
-          <span class="progress-actions">
-            <button id="btn-export-log" class="btn ghost small" type="button">NDJSON</button>
-            <button id="btn-export-text" class="btn ghost small" type="button">文本</button>
-            <button id="btn-clear-log" class="btn ghost small" type="button">清空</button>
-            <button id="btn-toggle-log" class="btn ghost small" type="button" aria-expanded="true">收起</button>
-          </span>
-        </div>
-        <div id="log-body" class="log-body">
-          <ol id="log-lines" class="log-lines" aria-live="polite"></ol>
-        </div>
-      </section>
+    <span id="sw-note" class="sr-only"></span>
 
-      <section id="pane-diag" class="pane" role="tabpanel" aria-labelledby="tab-diag" hidden>
-        <details class="diag" open>
-          <summary>设备状态</summary>
-          <div id="state-panel" class="state"></div>
-          <p id="readonly-note" class="note"></p>
-          <h4>只读信息</h4>
-          <div id="info-panel" class="info"><p class="muted">尚未读取。</p></div>
-          <h4>错误</h4>
-          <div id="errors" class="errors"><p class="muted">没有错误。</p></div>
-        </details>
-
-        <details class="diag">
-          <summary>传输记录</summary>
-          <p id="trace-count" class="note">0 条</p>
-          <div class="table-wrap">
-            <table class="grid">
-              <thead>
-                <tr><th>#</th><th>类型</th><th>命令 / stage</th><th>长度</th><th>ms</th><th>状态</th><th>数据</th></tr>
-              </thead>
-              <tbody id="trace-body"></tbody>
-            </table>
-          </div>
-        </details>
-
-        <details class="diag">
-          <summary>命令</summary>
-          <form id="command-form" class="command">
-            <span class="prompt">›</span>
-            <input id="command-input" type="text" autocomplete="off" spellcheck="false"
-                   placeholder="ld | desc | cd <n> | sd <n> | db | info | help" />
-            <button type="submit" class="btn primary small">运行</button>
-          </form>
-          <div class="quick">
-            <button type="button" class="btn ghost small" data-command="ld">ld</button>
-            <button type="button" class="btn ghost small" data-command="desc">desc</button>
-            <button type="button" class="btn ghost small" data-command="cd 1">cd 1</button>
-            <button type="button" class="btn ghost small" data-command="sd 1">sd 1</button>
-            <button type="button" class="btn ghost small" data-command="info" data-cbw="true">info</button>
-            <button id="btn-db" type="button" class="btn ghost small" data-cbw="true">Download Boot</button>
-            <button type="button" class="btn ghost small" data-command="help">help</button>
-            <button id="btn-clear" type="button" class="btn ghost small">清空输出</button>
-          </div>
-          <pre id="terminal" class="terminal" aria-live="polite"></pre>
-          <pre id="uf-log" class="terminal small">尚未开始写入。</pre>
-        </details>
-
-        <details class="diag">
-          <summary>写入计划与 loader</summary>
-          <div class="row-actions">
-            <label class="file" for="file-loader">
-              <input id="file-loader" type="file" accept=".bin,application/octet-stream" />
-              <span id="file-label">改用本地 loader…</span>
-            </label>
-            <button id="btn-demo-loader" type="button" class="btn ghost small" hidden>演示 loader</button>
-            <button id="btn-clear-loader" type="button" class="btn ghost small">改回镜像自带</button>
-            <button id="btn-plan" type="button" class="btn ghost small" disabled>重新生成计划</button>
-          </div>
-          <pre id="loader-summary" class="meta">尚未生成计划。</pre>
-        </details>
-
-        <details class="diag">
-          <summary>安装与离线</summary>
-          <div class="row-actions">
-            <button id="btn-install" type="button" class="btn secondary small" hidden>安装为应用</button>
-            <button id="btn-reload-app" type="button" class="btn ghost small" hidden>刷新页面</button>
-          </div>
-          <p id="install-note" class="note"></p>
-          <p id="sw-note" class="note"></p>
-        </details>
-      </section>
-    </aside>
-
-    <script type="module" src="./shell.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
 </html>
