@@ -69,7 +69,7 @@ main thread (app.js)                        worker (worker.js)
   `ufCancel` / `ufVerify` / `imageLoader` / `demoImage` / `close`）与 JS bridge 传输。`ufVerify` 是 M4b
   新增的：结构报告 + PARM CRC + 可选 RKAF CRC / 整镜像 MD5，并在读取器上挂进度回调。
 - `web/app/`：页面（选系统 / 设备 / 日志三块）。主线程 WebUSB host、module worker、`preflight.js` 门禁、
-  `images.js` 镜像清单与流式下载、`brand.js` 官方品牌字形、`verify.js` 校验结论、`devices.js` 设备列表、
+  `images.js` 镜像清单与导航式下载、`brand.js` 官方品牌字形、`verify.js` 校验结论、`devices.js` 设备列表、
   `logs.js` 日志仓库。
 - `web/probe/`：M0 只读探针，保留下来用于抓 trace 与对照，不受后续阶段影响。
 - `cmd/genprotocol/`：把 Go 的命令表/常量生成到 `web/app/protocol.js` 与 `web/probe/protocol.js`。
@@ -86,7 +86,7 @@ cmd/uf/                     uf --dry-run 计划 + --mock/--replay 写入状态�
 cmd/wasm/                   Go/WASM 核心导出（shell + ufPlan/ufRun/ufCancel/ufVerify/imageLoader/demoImage）
 cmd/genprotocol/            生成 web/app/protocol.js 与 web/probe/protocol.js
 web/app/                    页面：三块（选系统 / 选设备 / 开始刷写）+ 日志（Etcher 式单列）
-web/app/images.js           镜像清单解析、CORS 探测、流式下载（File System Access API）
+web/app/images.js           镜像清单解析、导航式下载（<a download>，页面不读字节）
 web/app/brand.js            FydeOS / openFyde 官方品牌字形（内联 SVG，跟随主题色）
 web/app/images.json         官方镜像清单（品牌/版本/大小/sha256/URL/发布页）
 web/app/verify.js           校验结论与阻断/警告规则、2 分钟预算

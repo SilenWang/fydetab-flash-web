@@ -19,8 +19,6 @@ export default {
   'image.zipStats': '压缩包读取 {size}（{reads} 次）',
   'worker.ignored': '忽略消息 {type}',
   'app.bootFailed': '页面无法启动：{message}',
-  'app.noStreamSave': '这个浏览器不能直接下载官方镜像，请在「选择系统」里选本地文件，或改用桌面版 Chrome / Edge。',
-
   // 三块
   'tile.image': '选择系统',
   'tile.device': '选择设备',
@@ -81,15 +79,11 @@ export default {
   'image.verdict.quick': '快速校验通过',
 
   // 下载
-  'download.preparing': '准备下载 {label}…',
-  'download.started': '开始下载：{label} ← {url}',
-  'download.probed': '探测：{reason}',
-  'download.unknownSize': '未知大小',
-  'download.progress': '{received} / {total} · {speed} · {eta}',
-  'download.done': '下载完成：{name} · {size} · 用时 {time}',
-  'download.tabFallback': '已在新标签页下载；下好后在「选择系统」里选本地文件。',
-  'download.cancelled': '已取消下载',
-  'download.cancelRequested': '取消下载…',
+  'download.hintBody': '请等待浏览器下载完成，手动选择镜像。',
+  'download.hintPick': '选择镜像',
+  'download.noUrl': '这个版本没有下载地址：请到发布页手动下载，再选择本地文件。',
+  'download.noUrlLog': '{label}：清单里没有下载地址',
+  'download.handedOff': '交给浏览器下载：{label} ← {url}',
   'download.pickerUnavailable': '文件选择器不可用（{error}），改用普通文件输入框',
   'download.pickerDescription': 'Rockchip 镜像',
 
@@ -175,7 +169,6 @@ export default {
   'action.install': '安装到桌面',
   'action.reload': '刷新页面',
   'action.pickLocal': '选择本地文件',
-  'action.browserDownload': '浏览器下载',
   'cta.running': '{percent}% · 不要拔线',
   'cta.preparing': '准备写入…',
   'cta.pickImage': '先选系统',
@@ -202,7 +195,6 @@ export default {
   'dialog.connectTitle': '连接设备',
   'dialog.connectSub': '用 USB 线把 Fydetab Duo 接到电脑',
   'dialog.wipeNote': '刷写会清除设备上的原有系统',
-  'progress.download': '下载',
   'progress.verify': '校验',
   'footer.source': '固件来自 FydeOS 与 openFyde 官方发布页。',
 
@@ -220,8 +212,6 @@ export default {
   'pwa.newVersion': ' · 有新版本',
   'pwa.canInstall': '可以安装到桌面',
   'pwa.installedLog': '已安装到桌面',
-  'pwa.noStreamLog': '浏览器不支持流式写盘：官方镜像需要手动下载',
-
   // 浏览器支持
   'support.noWebusb': '这个浏览器没有 WebUSB，请用桌面版 Chrome / Edge 打开。',
   'support.insecure': 'WebUSB 需要 https 或 localhost 才能使用。',
@@ -330,21 +320,6 @@ export default {
   'images.catalog.noFetch': '没有 fetch：无法读取镜像清单',
   'images.catalog.http': '读取镜像清单失败：HTTP {status}',
   'images.catalog.fetchFailed': '读取镜像清单失败：{error}',
-  'images.advice.chromium': '这个浏览器不支持 File System Access API（流式写盘）：请用桌面版 Chrome / Edge 下载，或手动下载后用“选择本地镜像”。',
-  'images.badEntry': '清单条目无效',
-  'images.noUrl.withPage': '这份清单没有收录直链：请从厂商下载页获取，或点右侧链接自行下载。',
-  'images.noUrl.plain': '这份清单没有收录直链：请手动下载后用“选择本地镜像”。',
-  'images.picker.cancelled': '已取消保存位置选择。',
-  'images.picker.failed': '无法打开保存位置选择器：{error}',
-  'images.transfer.noBody': '响应没有 body：无法流式写盘',
-  'images.transfer.failed': '下载失败：{error}',
-  'images.probe.sameOrigin': '同源文件，浏览器可以直接读取。',
-  'images.probe.noFetch': '没有 fetch：无法探测该地址。',
-  'images.probe.cors': '浏览器被 CORS 拦下（fetch 失败）：{error}。服务器需要返回 Access-Control-Allow-Origin。',
-  'images.probe.rejected': '服务器拒绝了探测请求（HEAD {head} / GET {get}）。',
-  'images.probe.noAcao': '响应没有 Access-Control-Allow-Origin：浏览器不能直接读取，已改为在新标签页打开。',
-  'images.probe.allowed': '服务器允许跨域读取（Access-Control-Allow-Origin: {origin}）。',
-
   // 时长
   'time.lessThanSecond': '<1 秒',
   'time.seconds': '{count} 秒',
