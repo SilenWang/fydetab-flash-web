@@ -103,7 +103,7 @@ loader 的来源、LDR 头字段与拒绝规则见 [device-commands.md](device-c
 ## 日志
 
 `--log <path>`（`-` 表示 stdout）输出 NDJSON，schema 见 [uf-write-path.md §8](uf-write-path.md#8-json-日志uf-log1)；
-页面第 5 块导出的 NDJSON 与它同形状。日志写失败不会把成功的刷写变成失败。
+页面「日志」抽屉导出的 NDJSON 与它同形状。日志写失败不会把成功的刷写变成失败。
 
 ## 相关文档
 

@@ -47,7 +47,7 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
       status: 'none',
       full: false,
       allowsWrite: false,
-      checks: [check('image', '镜像已校验', 'pending', '还没有校验：选好镜像后页面会自动校验。')],
+      checks: [check('image', '镜像已校验', 'pending', '还没有校验：选好镜像后会自动开始。')],
       summary: '尚未校验。',
       phases: [],
     };

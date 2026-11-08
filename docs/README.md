@@ -26,7 +26,7 @@
 |---|---|
 | [protocol-notes.md](protocol-notes.md) | rockusb 传输、CBW/CSW、只读命令、Download Boot、loader 错配实测 |
 | [rkfw-rkaf-format.md](rkfw-rkaf-format.md) | RKFW / RKAF / parameter 格式、CRC、GPT 计划、核对方法 |
-| [m4b-ui.md](m4b-ui.md) | 五区块页面的下载/校验/设备/刷写/日志、CORS 与 2 分钟规则 |
+| [m4b-ui.md](m4b-ui.md) | 页面的下载/校验/设备/写入、CORS 与 2 分钟规则 |
 | [99-rockchip-webusb.rules](99-rockchip-webusb.rules) | Linux udev 规则（可直接安装） |
 
 项目入口见仓库根目录的 [README](../README.md)。

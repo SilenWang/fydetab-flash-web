@@ -67,7 +67,7 @@
 官方固件包通常是 `RK3588_..._update.zip`，里面是一个 3.8 GiB 的 `update.img`（RKFW 容器）。M4 不再
 要求你先解压：
 
-1. 第 1 块 **“镜像”** 里选 `.zip`（文件选择器与 `showOpenFilePicker` 都接受 `.zip`）。
+1. **镜像** 面板里选 `.zip`（文件选择器与 `showOpenFilePicker` 都接受 `.zip`）。
 2. 页面从**文件尾部**找 EOCD（必要时读 ZIP64 EOCD 记录），解析中央目录，只读几十 KiB。
 3. 依次对候选条目解出**前 4 个字节**，第一个以 `RKFW` 开头的条目就是镜像（裸 `RKAF` 只在没有
    RKFW 时兜底）。厂商包里的 `README.txt`、`MiniLoaderAll.bin`、驱动压缩包都会被跳过，页面会列出
@@ -84,7 +84,7 @@
 - 只支持 `stored` 与 `deflate` 两种压缩方式（官方包就是 deflate）；`lzma`/`bzip2` 等条目会被跳过并
   在页面里说明，而不是猜着解。
 - ZIP64（> 4 GiB 条目/偏移）已支持，中央目录里的 32 位字段被 `0xFFFFFFFF` 占满时走 ZIP64 扩展。
-- **不解压整个包就不校验 zip 的 CRC**；镜像自身的 RKAF CRC / 整镜像 MD5 / PARM CRC 由第 2 块的校验负责
+- **不解压整个包就不校验 zip 的 CRC**；镜像自身的 RKAF CRC / 整镜像 MD5 / PARM CRC 由校验阶段负责
   （页面默认做完整校验，策略与本机实测耗时见 [`docs/m4b-ui.md`](m4b-ui.md)）。ZIP 包的完整校验会多一次
   按需解压的成本，取样测速已经包含它。
 
@@ -95,7 +95,7 @@
 pixi run sample          # → web/samples/demo-update.img / .zip
 pixi run dev             # → http://localhost:5173/app/
 
-# 2) 页面里先选 demo-update.img，记下第 1 块“镜像”摘要与第 2 块校验结论里的每一项
+# 2) 页面里先选 demo-update.img，记下镜像摘要与校验结论里的每一项
 #    （items、传输字节、未覆盖尾部）；再选 demo-update.zip，对比同样的字段：
 #    两个计划必须逐字段相同，只有“文件:”一行显示包名。
 ```
@@ -112,7 +112,7 @@ pixi run test            # web/app/test/uf-zip.test.mjs 里 "a zip package plans
 
 ## 4. 出错时怎么带着证据来
 
-第 5 块 **“日志”** 里有 **导出 NDJSON** 与 **导出文本**：把镜像选择与下载、CORS 探测、校验逐项结果与耗时、
+右侧 **日志** 抽屉里有 **导出 NDJSON** 与 **导出文本**：把镜像选择与下载、CORS 探测、校验逐项结果与耗时、
 设备插拔、命令、uf 进度、每一次 USB 传输、zip 统计（读了多少、回退重解几次、峰值缓冲）写成一份文件下载下来。
 NDJSON 的形状与 CLI 的 `uf --log` 一致，可以直接贴到 issue 里。
 

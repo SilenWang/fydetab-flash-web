@@ -16,7 +16,7 @@
 // the page and the worker — the service worker only answers GETs for its own
 // origin.
 
-const VERSION = 'fydetab-flash-web-m4b-1';
+const VERSION = 'fydetab-flash-web-m4b-2';
 const CACHE = `fydetab-flash-web-${VERSION}`;
 
 // Everything the app cannot run without. Kept in one place so the pwa test can
@@ -27,6 +27,7 @@ const PRECACHE = [
   './index.html',
   './styles.css',
   './app.js',
+  './shell.js',
   './worker.js',
   './bridge.js',
   './usb-host.js',

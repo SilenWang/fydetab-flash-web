@@ -238,6 +238,8 @@ function appendLogLine(entry) {
 
 function renderLogCount() {
   const counts = log.countByLevel();
+  const unread = (counts.warn ?? 0) + (counts.error ?? 0);
+  document.getElementById('btn-drawer')?.classList.toggle('alert', unread > 0);
   const parts = [`${log.size} 条`];
   if (counts.warn) parts.push(`${counts.warn} 警告`);
   if (counts.error) parts.push(`${counts.error} 错误`);
@@ -553,7 +555,7 @@ function renderCatalog() {
     if (entry.url) {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'primary';
+      button.className = 'btn secondary small';
       button.dataset.downloadId = entry.id;
       button.textContent = '下载';
       button.disabled = state.download.running;
@@ -571,7 +573,7 @@ function renderCatalog() {
     }
     if (entry.page) {
       const link = document.createElement('a');
-      link.className = 'button-link';
+      link.className = 'link';
       link.href = entry.page;
       link.target = '_blank';
       link.rel = 'noreferrer';
@@ -761,26 +763,27 @@ async function loadDemoImage() {
 
 function renderImageSummary() {
   if (!state.image && state.imageKind !== 'demo') {
-    ui.imageSummary.textContent = '尚未选择镜像。';
+    ui.imageSummary.hidden = true;
+    ui.imageSummary.textContent = '';
     ui.imageSummary.dataset.tone = '';
     return;
   }
-  const lines = [
-    `文件: ${state.imageName || '-'} · ${formatBytes(state.image?.size ?? state.imageSize ?? 0)}`,
-    `来源: ${sourceLabel(state.imageMeta.source)}${state.imageMeta.catalogSize ? `（清单大小 ${formatBytes(state.imageMeta.catalogSize)}）` : ''}`,
-    `清单 sha256: ${state.imageMeta.sha256 ?? '未收录（以镜像内 MD5 / PARM CRC 为准）'}`,
-    `校验状态: ${state.verification.summary}`,
-  ];
   const facts = state.plan?.facts;
+  const bits = [
+    `${state.imageName || '-'} · ${formatBytes(state.image?.size ?? state.imageSize ?? 0)}`,
+    `${sourceLabel(state.imageMeta.source)}${state.imageMeta.catalogSize ? `（清单 ${formatBytes(state.imageMeta.catalogSize)}）` : ''}`,
+    state.imageMeta.sha256 ? `sha256 ${state.imageMeta.sha256.slice(0, 12)}… 已收录` : 'sha256 未收录',
+    state.verification.summary,
+  ];
   if (facts) {
-    lines.push(
-      `计划: 写 ${facts.items ?? 0} 项 · 传输 ${formatBytes(facts.totalBytes ?? 0)} · 未覆盖 ${formatBytes(
-        facts.uncoveredBytes ?? 0,
-      )}（${facts.uncoveredPartitions || '无'}）· 尾部 ${facts.eraseMode ?? '-'}`,
+    bits.push(
+      `写 ${facts.items ?? 0} 项 / ${formatBytes(facts.totalBytes ?? 0)} · 未覆盖 ${formatBytes(facts.uncoveredBytes ?? 0)}（${
+        facts.uncoveredPartitions || '无'
+      }）`,
     );
   }
-  if (!state.plan) lines.push('计划: 尚未生成');
-  ui.imageSummary.textContent = lines.join('\n');
+  ui.imageSummary.hidden = false;
+  ui.imageSummary.textContent = bits.join(' · ');
   ui.imageSummary.dataset.tone = state.plan && state.plan.ok === false ? 'error' : '';
 }
 
@@ -1264,20 +1267,26 @@ function renderDevices() {
 
   if (rows.length === 0) {
     ui.devices.innerHTML =
-      '<p class="muted">没有已授权设备。点“添加设备”，在浏览器弹窗里选 0x2207 设备；Linux 还需要 udev 规则（docs/webusb-drivers.md）。</p>';
+      '<div class="device-empty"><strong>还没有已授权设备</strong><span>连接 Fydetab Duo 后点“连接设备”，在浏览器弹窗里选择 Rockchip（0x2207）设备。</span><span>Linux 需要 udev 规则，见 docs/webusb-drivers.md。</span></div>';
   }
 
   if (current) {
-    ui.deviceSelected.textContent = `当前选中：${current.productName || 'Rockchip device'} · ${current.modeLabel} · ${
-      current.serialNumber || '无序列号'
-    }${current.devNo != null ? ` · DevNo=${current.devNo}` : '（core 还没列出：点“刷新”）'}`;
+    // 卡片已经高亮并列出详情，这里不再重复一遍；只补一条“下一步”。
+    ui.deviceSelected.textContent = deviceNextHint(current);
   } else if (rows.length > 1) {
     ui.deviceSelected.textContent = '有多个设备：请在上面的列表里选一个。';
   } else {
-    ui.deviceSelected.textContent = '还没有选中设备。';
+    ui.deviceSelected.textContent = '';
   }
+  ui.deviceSelected.hidden = ui.deviceSelected.textContent === '';
   renderChecklist();
   updateButtons();
+}
+
+function deviceNextHint(row) {
+  if (row.mode === 'MASKROM') return '下一步：写入会自动先发 Download Boot。';
+  if (row.mode === 'LOADER') return '已进入 LOADER，可以直接写入。';
+  return '设备模式未知：刷新后重试。';
 }
 
 async function selectDevice(row) {
@@ -1385,7 +1394,7 @@ function renderReconnect() {
   const steps = [
     cause,
     '点“重新授权”，在浏览器弹窗里重新选择 0x2207 设备（重新枚举会撤销上一次的实例授权）。',
-    '授权后页面自动 ld；刷写块的设备列表会重新出现，选一个继续。',
+    '授权后页面会自动重新读取设备列表，选一个继续。',
   ];
   if (r.attempts >= 3) {
     steps.push('已经重连 3 次以上：检查 USB 线与供电，Linux 上确认 udev 规则（docs/webusb-drivers.md），Windows 上确认驱动是 WinUSB。');
@@ -1424,6 +1433,18 @@ function evaluation() {
 
 function renderChecklist() {
   const result = evaluation();
+  const nothingYet = !state.image && state.imageKind !== 'demo' && !state.deviceState;
+  const hasImage = Boolean(state.image || state.imageKind === 'demo');
+  document.querySelector('.verify')?.toggleAttribute('hidden', !hasImage);
+  document.querySelector('.erase-row')?.toggleAttribute('hidden', !hasImage);
+  if (nothingYet) {
+    // 什么都没选时不铺五条“还没有…”：一句话说明这里将来会做什么。
+    ui.checklist.innerHTML = '<li class="gate-empty">选好镜像、连接设备后，这里会逐项确认写入条件。</li>';
+    ui.readonlyNote.textContent = `只读按钮：${result.readOnly.enabled ? '可用' : '已禁用'} — ${result.readOnly.reason}`;
+    ui.readonlyNote.dataset.tone = result.readOnly.enabled ? 'ok' : 'warn';
+    updateButtons(result);
+    return;
+  }
   renderChecks(ui.checklist, result.items);
   ui.readonlyNote.textContent = `只读按钮：${result.readOnly.enabled ? '可用' : '已禁用'} — ${result.readOnly.reason}`;
   ui.readonlyNote.dataset.tone = result.readOnly.enabled ? 'ok' : 'warn';
@@ -1577,7 +1598,7 @@ function renderUfResult(result) {
       `刷写完成：写入 ${formatBytes(run.bytesWritten)} · 擦除 ${formatBytes(run.bytesErased)} · ${(run.durationMs / 1000).toFixed(1)}s`,
     );
     setBanner('刷写完成。设备复位后会重新枚举为 LOADER；刷新后可以复查。', 'info');
-    appendUf('写入完成。设备复位后会重新枚举为 LOADER；点“添加设备”后刷新可复查。');
+    appendUf('写入完成。设备复位后会重新枚举为 LOADER；点“连接设备”后刷新可复查。');
   } else {
     renderWriteFailure(run.error ?? { codeName: 'WRITE_FAILED', detail: '写入未完成' });
   }
@@ -1604,9 +1625,9 @@ function renderWriteFailure(error = {}) {
   ui.writeFailureDetail.textContent = [error.detail, error.hint].filter(Boolean).join(' ');
   const steps = [
     '先点“开始刷写”重试一次：状态机会自己重新 db，不需要手动复位。',
-    '设备掉出列表时：断电重进 maskrom（按住恢复键上电）→ 点“添加设备”重新授权 → 重新选设备。',
+    '设备掉出列表时：断电重进 maskrom（按住恢复键上电）→ 点“连接设备”重新授权 → 重新选设备。',
     '换一根数据线 / 换一个 USB 口（USB 2.0 口更稳），不要经过 hub。',
-    '把日志块导出的 NDJSON 附到 issue 里：里面有每一步的命令、进度和错误码。',
+    '把「日志」抽屉导出的 NDJSON 附到 issue 里：里面有每一步的命令、进度和错误码。',
   ];
   ui.writeFailureSteps.replaceChildren(
     ...steps.map((text) => {
@@ -1686,6 +1707,7 @@ function updateButtons(precomputed) {
   ui.fullVerify.disabled = state.verifying || state.ufRunning;
   ui.downloadCancel.disabled = !state.download.running;
   ui.writeButton.disabled = !result.canWrite;
+  ui.writeButton.textContent = state.ufRunning ? '刷写中…' : '开始刷写';
   ui.cancelWrite.disabled = !state.ufRunning;
   ui.eraseMode.disabled = state.ufRunning;
   ui.eraseConfirm.disabled = state.ufRunning;
@@ -1788,13 +1810,13 @@ function renderState(st) {
   if (st.awaitingReenumeration) {
     const note = document.createElement('div');
     note.className = 'state-note';
-    note.textContent = 'Download Boot 已发出：等待设备重新枚举为 LOADER。若浏览器撤销了授权，再点一次“添加设备”。';
+    note.textContent = 'Download Boot 已发出：等待设备重新枚举为 LOADER。若浏览器撤销了授权，再点一次“连接设备”。';
     ui.state.appendChild(note);
   }
 }
 
 function nextStep(st) {
-  if (!st.devices || st.devices.length === 0) return '点“添加设备”选择 0x2207 设备';
+  if (!st.devices || st.devices.length === 0) return '点“连接设备”选择 0x2207 设备';
   if (st.awaitingReenumeration) return '等待重新枚举 → 重新授权 → 刷新';
   if (st.mode === 'MASKROM') return '镜像校验通过后点“开始刷写”（第一步就是 db）';
   if (st.mode === 'LOADER') return '可以开始刷写；或 info 读取只读信息';
@@ -2017,6 +2039,9 @@ function wireEvents() {
     log.clear();
     log.info('log', '日志已清空');
   });
+  document.getElementById('btn-drawer')?.addEventListener('click', () => {
+    document.getElementById('btn-drawer')?.classList.remove('alert');
+  });
   ui.toggleLog.addEventListener('click', () => {
     const collapsed = !ui.logBody.hidden;
     ui.logBody.hidden = collapsed;
@@ -2080,7 +2105,7 @@ function wireEvents() {
 
 async function main() {
   initLogPanel();
-  log.info('app', '页面启动：三个区块，一条主流程（镜像 → 刷写 → 日志）');
+  log.info('app', '页面启动：镜像 → 设备 → 写入，日志与诊断在抽屉里');
   const caps = capabilityReport(globalThis);
   ui.fsaNote.textContent = caps.save ? '' : caps.advice;
   if (!caps.save) log.warn('download', caps.advice);

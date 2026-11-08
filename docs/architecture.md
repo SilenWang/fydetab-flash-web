@@ -5,8 +5,8 @@
 
 当前阶段：M1（Go/WASM 核心 + WebUSB bridge + `ld`/`cd`/`sd` + Download Boot + 只读信息）、
 M2（离线 `uf --dry-run` 计划）、M3a（写入层 + `uf` 状态机，mock/回放验证）、M3b（WebUSB 写入绑定 +
-真机前自检）、M4（可安装 PWA + 离线 + 官方 `.zip` 直读），以及 M4b（五区块单页：镜像下载 / 校验 /
-设备列表 / 刷写 / 日志）。
+真机前自检）、M4（可安装 PWA + 离线 + 官方 `.zip` 直读），以及 M4b（工作台单页：镜像下载 / 校验 /
+设备 / 写入，日志与诊断收进抽屉）。
 
 M3b 之后浏览器里已经有一条完整的写入路径：从 `update.img` 的 RKFW 头里切出**镜像自带的 loader** 做
 Download Boot，再用 `internal/uf` 的同一套状态机执行 `gpt → wl → rd`；写入前必须通过页面的逐项自检。
@@ -46,7 +46,7 @@ main thread (app.js)                        worker (worker.js)
 | M3a | 写入层 + `uf` 状态机，在 mock 设备与录制 trace 上验证 | [cli.md](cli.md)、[uf-write-path.md](uf-write-path.md) |
 | M3b | WebUSB 写入绑定 + 打开设备前的 loader 自检与页面门禁 | [uf-write-path.md §9](uf-write-path.md#9-webusb-绑定与-loader-自检m3b) |
 | M4 | 可安装 PWA、离线缓存、官方 `.zip` 直读 | [pwa-offline.md](pwa-offline.md) |
-| M4b | 五区块单页（镜像 / 校验 / 设备 / 刷写 / 日志） | [m4b-ui.md](m4b-ui.md) |
+| M4b | 工作台单页（镜像 / 设备 / 写入 + 日志抽屉） | [m4b-ui.md](m4b-ui.md) |
 
 阶段边界：M4 只改页面与工具链，`internal/` 的写入语义与 `web/app/preflight.js` 的门禁条件未动；M4b 只改
 页面、下载/校验的前端编排与一处**新增的** wasm 导出（`ufVerify`），`ufPlan` / `ufRun` / `ufCancel` 与写入
@@ -69,7 +69,7 @@ main thread (app.js)                        worker (worker.js)
 - `cmd/wasm/`：`syscall/js` 导出（`bindBridge` / `exec` / `inspectLoader` / `ufPlan` / `ufRun` /
   `ufCancel` / `ufVerify` / `imageLoader` / `demoImage` / `close`）与 JS bridge 传输。`ufVerify` 是 M4b
   新增的：结构报告 + PARM CRC + 可选 RKAF CRC / 整镜像 MD5，并在读取器上挂进度回调。
-- `web/app/`：页面（五区块单流程 + 高级/诊断折叠区）。主线程 WebUSB host、module worker、mock 设备、
+- `web/app/`：页面（镜像 / 设备 / 写入工作台 + 日志与诊断抽屉）。主线程 WebUSB host、module worker、mock 设备、
   `preflight.js` 门禁、`images.js` 镜像清单与流式下载、`verify.js` 校验结论、`devices.js` 设备列表、
   `logs.js` 日志仓库。
 - `web/probe/`：M0 只读探针，保留下来用于抓 trace 与对照，不受后续阶段影响。
@@ -86,7 +86,7 @@ internal/uf/                写入状态机、IDB 模型、mock/回放、BridgeC
 cmd/uf/                     uf --dry-run 计划 + --mock/--replay 写入状态机
 cmd/wasm/                   Go/WASM 核心导出（shell + ufPlan/ufRun/ufCancel/ufVerify/imageLoader/demoImage）
 cmd/genprotocol/            生成 web/app/protocol.js 与 web/probe/protocol.js
-web/app/                    页面：五区块单流程（镜像/校验/设备/刷写/日志）+ 高级诊断折叠区
+web/app/                    页面：工作台（镜像/设备/写入）+ 日志与诊断抽屉
 web/app/images.js           镜像清单解析、CORS 探测、流式下载（File System Access API）
 web/app/images.json         官方镜像清单（版本/文件名/大小/sha256/URL）
 web/app/verify.js           校验结论与阻断/警告规则、2 分钟预算
@@ -120,7 +120,7 @@ docs/rkfw-rkaf-format.md    RKFW / RKAF / parameter 格式、GPT 计划与核对
 docs/webusb-drivers.md      macOS arm64 / Linux / Windows 的 WebUSB 与驱动说明
 docs/99-rockchip-webusb.rules  Linux udev 规则
 docs/pwa-offline.md         安装、离线验证、zip 直读与日志导出
-docs/m4b-ui.md              五区块页面：下载/校验/设备/刷写/日志、CORS 与 2 分钟规则
+docs/m4b-ui.md              页面结构：下载/校验/设备/写入、CORS 与 2 分钟规则
 ```
 
 > 注：当前仓库快照未包含 `.github/workflows/`；CI/部署的既有约定见

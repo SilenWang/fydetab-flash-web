@@ -59,6 +59,8 @@ test('the page declares the manifest and the install surface', () => {
   assert.match(html, /<link rel="icon"/);
   assert.match(html, /name="theme-color"/);
   assert.match(html, /id="file-image"[^>]*accept="[^"]*\.zip/, 'the image picker must accept .zip');
+  assert.match(html, /id="drawer"/, 'the log / diagnostics drawer must exist');
+  assert.match(html, /id="btn-write"/, 'the persistent action bar must own the write button');
 
   for (const id of ['btn-install', 'btn-reload-app', 'install-note', 'sw-note', 'net-badge', 'zip-summary', 'reconnect', 'reconnect-steps', 'btn-reconnect-auth', 'btn-export-log']) {
     assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
@@ -93,7 +95,7 @@ test('the service worker precaches everything the app imports', () => {
   // Every local module the page or the worker imports must be in the list,
   // otherwise the offline boot fails at the first import.
   const imports = new Set();
-  for (const file of ['app.js', 'worker.js', 'zip-source.js', 'bridge.js', 'preflight.js', 'usb-host.js', 'images.js', 'devices.js', 'logs.js', 'verify.js']) {
+  for (const file of ['app.js', 'shell.js', 'worker.js', 'zip-source.js', 'bridge.js', 'preflight.js', 'usb-host.js', 'images.js', 'devices.js', 'logs.js', 'verify.js']) {
     for (const match of read(file).matchAll(/from '\.\/([\w./-]+\.js)'/g)) imports.add(match[1]);
   }
   imports.add('worker.js');
