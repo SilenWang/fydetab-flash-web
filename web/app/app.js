@@ -38,11 +38,15 @@ const ui = {
   banner: $('banner'),
 
   // 1 · image
+  imageButton: $('btn-image'),
+  imageTitle: $('tile-image-title'),
+  imageSub: $('tile-image-sub'),
+  imageDialog: $('image-dialog'),
+  closeImage: $('btn-close-image'),
   choices: $('image-choices'),
   pickImage: $('btn-pick-image'),
   fileImage: $('file-image'),
-  imageLabel: $('image-label'),
-  imageSummary: $('image-summary'),
+  versionList: $('version-list'),
   fsaNote: $('fsa-note'),
   downloadProgress: $('download-progress'),
   downloadBar: $('download-bar'),
@@ -52,14 +56,14 @@ const ui = {
   verifyProgress: $('verify-progress'),
   verifyBar: $('verify-bar'),
   verifyProgressText: $('verify-progress-text'),
-  versionDialog: $('version-dialog'),
-  versionTitle: $('version-title'),
-  versionList: $('version-list'),
-  closeVersions: $('btn-close-versions'),
 
   // 2 · device
+  deviceButton: $('btn-device'),
+  deviceTitle: $('tile-device-title'),
+  deviceSub: $('tile-device-sub'),
+  deviceDialog: $('device-dialog'),
+  closeDevice: $('btn-close-device'),
   devices: $('devices'),
-  deviceSelected: $('device-selected'),
   authorize: $('btn-authorize'),
   refresh: $('btn-refresh'),
   reconnect: $('reconnect'),
@@ -74,6 +78,7 @@ const ui = {
   eraseMode: $('erase-mode'),
   eraseConfirm: $('chk-erase-confirm'),
   writeButton: $('btn-write'),
+  writeTitle: $('tile-write-title'),
   cancelWrite: $('btn-cancel-write'),
   writeProgress: $('write-progress'),
   writeBar: $('write-bar'),
@@ -82,8 +87,7 @@ const ui = {
   writeFailureTitle: $('write-failure-title'),
   writeFailureDetail: $('write-failure-detail'),
   writeFailureSteps: $('write-failure-steps'),
-  actionImage: $('action-image'),
-  actionDevice: $('action-device'),
+  ctaHint: $('cta-hint'),
 
   // 4 · log
   logLines: $('log-lines'),
@@ -123,6 +127,7 @@ const state = {
   imageSize: 0,
   plan: null,
   catalog: null,
+  pickedBrand: null,
   verification: {
     status: 'none',
     level: VERIFY_NONE,
@@ -141,6 +146,7 @@ const state = {
   dbDone: false,
   ufRunning: false,
   ufProgress: 0,
+  writeDone: false,
   write: { startedAt: 0, phase: '', speed: 0, lastPercent: 0 },
   errors: [],
   reconnect: { needed: false, cause: '', attempts: 0, since: null },
@@ -216,8 +222,8 @@ function appendLogLine(entry) {
 
 function setLogOpen(open) {
   ui.logBody.hidden = !open;
-  ui.toggleLog.textContent = open ? '收起' : '展开';
   ui.toggleLog.setAttribute('aria-expanded', String(open));
+  ui.toggleLog.setAttribute('aria-label', open ? '收起日志' : '展开日志');
   renderLogCount();
 }
 
@@ -231,8 +237,9 @@ function renderLogCount() {
   if (!ui.logBody.hidden && log.size > 0) parts.unshift(`${log.size} 条`);
   ui.logCount.textContent = parts.join(' · ');
   ui.logEmpty.hidden = log.size > 0;
-  // Nothing recorded yet: an export button would produce an empty file.
-  ui.exportLog.hidden = log.size === 0;
+  // Export belongs to reading the log: collapsed or empty, there is nothing to
+  // act on, so the button stays out of the way.
+  ui.exportLog.hidden = ui.logBody.hidden || log.size === 0;
 }
 
 function initLogPanel() {
@@ -479,6 +486,7 @@ function renderChoices() {
   const groups = brandGroups();
   if (groups.length === 0) {
     ui.choices.innerHTML = '<p class="muted">还没有可下载的官方版本。请选择本地文件。</p>';
+    ui.versionList.replaceChildren();
     return;
   }
   ui.choices.replaceChildren(
@@ -488,26 +496,37 @@ function renderChoices() {
       button.className = 'brand-button';
       button.dataset.brand = brand;
       button.disabled = state.download.running;
+      button.setAttribute('aria-pressed', String(state.pickedBrand === brand));
 
       const logo = document.createElement('span');
+      logo.className = 'brand-logo-wrap';
       logo.innerHTML = LOGOS[brand];
       const sub = document.createElement('span');
       sub.className = 'brand-sub';
-      const latest = entries[0];
-      sub.textContent = `最新 ${latest.version}`;
+      sub.textContent = entries[0].version;
 
       button.append(logo, sub);
-      button.setAttribute('aria-label', `下载 ${BRAND_NAME[brand]}，最新 ${latest.version}`);
-      button.addEventListener('click', () => openVersions(brand));
+      button.setAttribute('aria-label', `${BRAND_NAME[brand]}，最新 ${entries[0].version}`);
+      button.addEventListener('click', () => selectBrand(brand));
       return button;
     }),
   );
+  renderVersions();
 }
 
-function openVersions(brand) {
-  const group = brandGroups().find((item) => item.brand === brand);
-  if (!group) return;
-  ui.versionTitle.textContent = BRAND_NAME[brand];
+/** selectBrand shows that brand's versions below the two brand tiles. */
+function selectBrand(brand) {
+  state.pickedBrand = state.pickedBrand === brand ? null : brand;
+  if (state.pickedBrand) log.info('image', `查看 ${BRAND_NAME[brand]} 版本`);
+  renderChoices();
+}
+
+function renderVersions() {
+  const group = brandGroups().find((item) => item.brand === state.pickedBrand);
+  if (!group) {
+    ui.versionList.replaceChildren();
+    return;
+  }
   ui.versionList.replaceChildren(
     ...group.entries.map((entry, index) => {
       const item = document.createElement('li');
@@ -537,7 +556,7 @@ function openVersions(brand) {
       }
 
       button.addEventListener('click', () => {
-        ui.versionDialog.close();
+        closeDialog(ui.imageDialog);
         if (entry.url) downloadCatalogEntry(entry);
         else if (entry.page) window.open(entry.page, '_blank', 'noreferrer');
       });
@@ -545,8 +564,24 @@ function openVersions(brand) {
       return item;
     }),
   );
-  if (typeof ui.versionDialog.showModal === 'function') ui.versionDialog.showModal();
-  else ui.versionDialog.setAttribute('open', '');
+}
+
+function openImageDialog() {
+  if (!state.pickedBrand) state.pickedBrand = BRAND_ORDER[0] ?? null;
+  renderChoices();
+  openDialog(ui.imageDialog);
+}
+
+/** openDialog works with or without <dialog>.showModal (old Safari). */
+function openDialog(dialog) {
+  if (typeof dialog?.showModal === 'function') dialog.showModal();
+  else dialog?.setAttribute('open', '');
+}
+
+function closeDialog(dialog) {
+  if (!dialog) return;
+  if (typeof dialog.close === 'function') dialog.close();
+  else dialog.removeAttribute('open');
 }
 
 async function downloadCatalogEntry(entry) {
@@ -599,7 +634,7 @@ async function downloadCatalogEntry(entry) {
       ui.downloadFallback.hidden = false;
     }
     log.warn('download', result.reason);
-    setBanner('已改为在新标签页下载；下好后点「选择文件」。', 'warn');
+    setBanner('已在新标签页下载；下好后在「选择系统」里选本地文件。', 'warn');
     return;
   }
   if (result.kind === 'cancelled') {
@@ -663,6 +698,7 @@ async function chooseImage(file, meta = {}) {
   };
   state.imageSize = file.size ?? 0;
   state.plan = null;
+  state.writeDone = false;
   state.eraseChoiceNeeded = false;
   verifyToken += 1; // any verification still running belongs to the old image
   state.verifying = false;
@@ -681,16 +717,13 @@ async function chooseImage(file, meta = {}) {
 
 function renderImageSummary() {
   const hasImage = Boolean(state.image);
-  ui.imageLabel.textContent = hasImage ? state.imageName : '或使用本地镜像';
-  ui.imageLabel.classList.toggle('has-file', hasImage);
-  ui.actionImage.textContent = hasImage ? shortName(state.imageLabel || state.imageName) : '未选择镜像';
   if (!hasImage) {
-    ui.imageSummary.hidden = true;
-    ui.imageSummary.textContent = '';
-    ui.imageSummary.dataset.tone = '';
+    ui.imageTitle.textContent = '选择系统';
+    ui.imageSub.textContent = 'FydeOS · openFyde';
     ui.eraseRow.hidden = true;
     return;
   }
+  ui.imageTitle.textContent = state.imageLabel || state.imageName;
   // One short line: how big it is, and whether it passed. Everything else the
   // page knows about the file belongs in the log.
   const verdict =
@@ -701,18 +734,11 @@ function renderImageSummary() {
         : state.verification.status === 'none'
           ? '准备中…'
           : state.verification.full
-            ? '校验通过'
+            ? '已校验'
             : '快速校验通过';
-  ui.imageSummary.hidden = false;
-  ui.imageSummary.textContent = `${formatBytes(state.image?.size ?? state.imageSize ?? 0)} · ${verdict}`;
-  ui.imageSummary.dataset.tone = /未通过/.test(verdict) ? 'error' : '';
+  ui.imageSub.textContent = `${formatBytes(state.image?.size ?? state.imageSize ?? 0)} · ${verdict}`;
+  ui.imageButton.dataset.tone = /未通过/.test(verdict) ? 'error' : '';
   renderEraseChoice();
-}
-
-function shortName(name) {
-  if (!name) return '';
-  const trimmed = name.trim();
-  return trimmed.length > 32 ? `${trimmed.slice(0, 18)}…${trimmed.slice(-10)}` : trimmed;
 }
 
 function renderZip(msg) {
@@ -973,51 +999,56 @@ function renderDevices() {
       card.type = 'button';
       card.className = `device-card${row.key === state.selectedKey ? ' selected' : ''}`;
       card.dataset.selected = String(row.key === state.selectedKey);
+
+      const icon = document.createElement('span');
+      icon.className = 'device-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.innerHTML =
+        '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2.5" width="8" height="19" rx="2" /><path d="M11 5.5h2" /></svg>';
+
+      const body = document.createElement('span');
+      body.className = 'device-body';
       const title = document.createElement('span');
       title.className = 'device-title';
       title.textContent = row.productName || 'Rockchip 设备';
       const meta = document.createElement('span');
       meta.className = 'device-meta';
-      const tag = document.createElement('span');
-      tag.className = 'device-tag';
-      tag.dataset.mode = row.mode;
-      tag.textContent = MODE_TEXT[row.mode] ?? row.modeLabel;
-      // Serial numbers only earn their space when they tell two boards apart.
-      if (rows.length > 1 && row.serialNumber) {
-        const text = document.createElement('span');
-        text.textContent = row.serialNumber;
-        meta.append(tag, text);
-      } else {
-        meta.append(tag);
-      }
-      card.append(title, meta);
+      // Mode plus, when two boards are plugged in, the only thing that tells
+      // them apart.
+      const parts = [MODE_TEXT[row.mode] ?? row.modeLabel];
+      if (rows.length > 1 && row.serialNumber) parts.push(row.serialNumber);
+      meta.textContent = parts.join(' · ');
+      body.append(title, meta);
+
+      const check = document.createElement('span');
+      check.className = 'device-check';
+      check.setAttribute('aria-hidden', 'true');
+      check.innerHTML =
+        '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5 6.3 12 13 4.5" /></svg>';
+
+      card.append(icon, body, check);
       card.addEventListener('click', () => selectDevice(row));
       return card;
     }),
   );
 
-  if (rows.length === 0) {
-    ui.devices.innerHTML = '<p class="device-empty">用数据线连上 Fydetab Duo，再点「连接设备」。</p>';
-  }
   ui.refresh.hidden = rows.length === 0 && !state.reconnect.needed;
 
+  // The tile says only what a person needs: which board, and whether the
+  // browser can already act on it.
   if (current) {
-    ui.deviceSelected.textContent = deviceNextHint(current);
+    ui.deviceTitle.textContent = current.productName || 'Fydetab Duo';
+    ui.deviceSub.textContent = MODE_TEXT[current.mode] ?? current.modeLabel;
   } else if (rows.length > 1) {
-    ui.deviceSelected.textContent = '有多个设备：请选一个。';
+    ui.deviceTitle.textContent = `${rows.length} 台设备`;
+    ui.deviceSub.textContent = '选一台';
   } else {
-    ui.deviceSelected.textContent = '';
+    ui.deviceTitle.textContent = '选择设备';
+    ui.deviceSub.textContent = 'USB 连接';
   }
-  ui.deviceSelected.hidden = ui.deviceSelected.textContent === '';
-  syncActionBar();
+
   renderChecklist();
   updateButtons();
-}
-
-function deviceNextHint(row) {
-  if (row.mode === 'MASKROM') return '写入前会自动进入刷写模式。';
-  if (row.mode === 'LOADER') return '';
-  return '刷新一下再看看。';
 }
 
 async function selectDevice(row) {
@@ -1025,6 +1056,7 @@ async function selectDevice(row) {
   state.lastSelectedDevice = row;
   log.info('device', `选中 ${row.modeLabel}${row.serialNumber ? ` · ${row.serialNumber}` : ''}`);
   renderDevices();
+  closeDialog(ui.deviceDialog);
   if (row.devNo != null && !state.ufRunning) await runLine(`cd ${row.devNo}`);
 }
 
@@ -1197,12 +1229,13 @@ async function startWrite() {
   const opts = { ...planOptions(), deviceHandle: currentHandle() };
   state.ufRunning = true;
   state.ufProgress = 0;
+  state.writeDone = false;
   state.write = { startedAt: performance.now(), phase: '', speed: 0, lastPercent: 0 };
   clearWriteFailure();
   ui.writeProgress.hidden = false;
   ui.writeBar.style.width = '0%';
+  ui.writeProgressText.hidden = false;
   ui.writeProgressText.textContent = '准备写入…';
-  setActionSub('progress');
   updateButtons();
   log.info('write', `开始刷写：${state.imageLabel || state.imageName} · 未覆盖空间 ${state.eraseMode} · ${state.verification.summary}`);
   try {
@@ -1254,13 +1287,12 @@ function renderWriteProgress(payload) {
   pieces.push(`已用 ${formatDuration(elapsed)}`);
   if (remaining !== null) pieces.push(`剩余 ${formatDuration(remaining)}`);
   ui.writeProgressText.textContent = pieces.join(' · ');
-  setActionSub('progress');
   document.querySelector('#write-progress')?.classList.toggle('complete', percent >= 100);
+  renderCtaHint(evaluation());
 }
 
 function renderUfResult(result) {
   state.ufRunning = false;
-  setActionSub('device');
   const run = result.run;
   if (!result.ok || !run) {
     const message = result.error || '写入失败';
@@ -1282,6 +1314,7 @@ function renderUfResult(result) {
   if (run.error) renderRunFailure(run.error);
   if (run.ok) {
     state.dbDone = true;
+    state.writeDone = true;
     ui.writeBar.style.width = '100%';
     document.querySelector('#write-progress')?.classList.add('complete');
     ui.writeProgressText.textContent = `完成 · 写入 ${formatBytes(run.bytesWritten)} · 用时 ${formatDuration(
@@ -1349,13 +1382,17 @@ function updateButtons(precomputed) {
   const busy = state.busy || state.ufRunning;
   const result = precomputed ?? evaluation();
 
+  // With a board already on the bench the connect target would only repeat
+  // what the device row says, so it steps aside.
+  ui.authorize.hidden = state.deviceRows.length > 0;
   ui.authorize.disabled = busy || !supported;
   ui.refresh.disabled = busy || !state.ready;
   ui.pickImage.disabled = busy || state.download.running;
   ui.fileImage.disabled = state.ufRunning;
   ui.downloadCancel.disabled = !state.download.running;
   ui.writeButton.disabled = !result.canWrite;
-  ui.writeButton.textContent = state.ufRunning ? '刷写中…' : '开始刷写';
+  ui.writeButton.dataset.state = state.ufRunning ? 'running' : state.writeDone ? 'done' : '';
+  ui.writeTitle.textContent = state.ufRunning ? '刷写中…' : state.writeDone ? '刷写完成' : '开始刷写';
   ui.cancelWrite.disabled = !state.ufRunning;
   ui.cancelWrite.hidden = !state.ufRunning;
   ui.eraseMode.disabled = state.ufRunning;
@@ -1364,23 +1401,38 @@ function updateButtons(precomputed) {
   for (const button of document.querySelectorAll('[data-download-id]')) {
     button.disabled = state.download.running;
   }
-  syncActionBar();
+  renderCtaHint(result);
 }
 
-/** setActionSub keeps the bar one line tall: device, or the write's progress. */
-function setActionSub(which) {
-  const writing = which === 'progress';
-  ui.actionDevice.hidden = writing;
-  ui.writeProgressText.hidden = !writing;
-}
-
-function syncActionBar() {
-  const hasImage = Boolean(state.image);
-  ui.actionImage.textContent = hasImage ? shortName(state.imageLabel || state.imageName) : '未选择镜像';
-  const card = document.querySelector('.device-card.selected');
-  const title = card?.querySelector('.device-title')?.textContent?.trim() ?? '';
-  const tag = card?.querySelector('.device-tag')?.textContent?.trim() ?? '';
-  ui.actionDevice.textContent = title ? (tag ? `${title} · ${tag}` : title) : '未连接设备';
+/** renderCtaHint says the one thing that is still missing. */
+function renderCtaHint(result) {
+  if (state.ufRunning) {
+    const percent = Math.round(state.write.lastPercent ?? 0);
+    ui.ctaHint.textContent = percent > 0 ? `${percent}% · 不要拔线` : '准备写入…';
+    return;
+  }
+  if (!state.image) {
+    ui.ctaHint.textContent = '先选系统';
+    return;
+  }
+  if (state.deviceRows.length === 0) {
+    ui.ctaHint.textContent = '先连接设备';
+    return;
+  }
+  if (state.writeDone) {
+    ui.ctaHint.textContent = '设备会自动重启';
+    return;
+  }
+  if (state.eraseChoiceNeeded) {
+    ui.ctaHint.textContent = '确认未覆盖空间';
+    return;
+  }
+  if (result.canWrite) {
+    ui.ctaHint.textContent = '覆盖设备上的原有系统';
+    return;
+  }
+  // Anything else that blocks is already spelled out in the list above.
+  ui.ctaHint.textContent = '还差一步';
 }
 
 function setBanner(text, tone = 'warn') {
@@ -1498,25 +1550,37 @@ function checkSupport() {
 // ---------------------------------------------------------------------------
 
 function initDropTarget() {
-  const card = document.querySelector('.card-image');
   const stop = (event) => event.preventDefault();
   document.addEventListener('dragover', (event) => {
     if (!event.dataTransfer?.types?.includes('Files')) return;
     stop(event);
-    card?.classList.add('drag');
+    document.body.classList.add('dragging');
   });
   document.addEventListener('dragleave', (event) => {
-    if (event.relatedTarget === null) card?.classList.remove('drag');
+    if (event.relatedTarget === null) document.body.classList.remove('dragging');
   });
   document.addEventListener('drop', (event) => {
     if (!event.dataTransfer?.files?.length) return;
     stop(event);
-    card?.classList.remove('drag');
+    document.body.classList.remove('dragging');
     chooseImage(event.dataTransfer.files[0], { source: 'local' });
   });
 }
 
 function wireEvents() {
+  ui.imageButton.addEventListener('click', openImageDialog);
+  ui.deviceButton.addEventListener('click', () => {
+    renderDevices();
+    openDialog(ui.deviceDialog);
+  });
+  ui.closeImage.addEventListener('click', () => closeDialog(ui.imageDialog));
+  ui.closeDevice.addEventListener('click', () => closeDialog(ui.deviceDialog));
+  for (const dialog of [ui.imageDialog, ui.deviceDialog]) {
+    dialog?.addEventListener('click', (event) => {
+      if (event.target === dialog) closeDialog(dialog);
+    });
+  }
+
   ui.pickImage.addEventListener('click', pickLocalImage);
   ui.fileImage.addEventListener('change', (event) => {
     const file = event.target.files?.[0] ?? null;
@@ -1524,11 +1588,6 @@ function wireEvents() {
     event.target.value = '';
   });
   ui.downloadCancel.addEventListener('click', cancelDownload);
-  ui.closeVersions.addEventListener('click', () => ui.versionDialog.close());
-  ui.versionDialog.addEventListener('click', (event) => {
-    if (event.target === ui.versionDialog) ui.versionDialog.close();
-  });
-
   ui.authorize.addEventListener('click', authorize);
   ui.reconnectAuth.addEventListener('click', async () => {
     await authorize();
@@ -1599,7 +1658,7 @@ async function main() {
     streams: typeof globalThis.ReadableStream === 'function' && typeof globalThis.WritableStream === 'function',
   };
   ui.fsaNote.textContent =
-    caps.save && caps.streams ? '' : '这个浏览器不能直接下载官方镜像：请手动下载后选择本地文件，或用桌面版 Chrome / Edge。';
+    caps.save && caps.streams ? '' : '这个浏览器不能直接下载官方镜像，请在「选择系统」里选本地文件，或改用桌面版 Chrome / Edge。';
   if (!caps.save) log.warn('download', '浏览器不支持流式写盘：官方镜像需要手动下载');
 
   checkSupport();
