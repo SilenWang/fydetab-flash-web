@@ -1818,8 +1818,8 @@ function renderState(st) {
 function nextStep(st) {
   if (!st.devices || st.devices.length === 0) return '点“连接设备”选择 0x2207 设备';
   if (st.awaitingReenumeration) return '等待重新枚举 → 重新授权 → 刷新';
-  if (st.mode === 'MASKROM') return '镜像校验通过后点“开始刷写”（第一步就是 db）';
-  if (st.mode === 'LOADER') return '可以开始刷写；或 info 读取只读信息';
+  if (st.mode === 'MASKROM') return '校验通过后可直接写入（第一步就是 Download Boot）';
+  if (st.mode === 'LOADER') return '可以直接写入；或在诊断里用 info 读取只读信息';
   return '刷新设备列表后按模式决定';
 }
 
