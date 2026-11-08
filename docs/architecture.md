@@ -85,7 +85,7 @@ internal/uf/                写入状态机、IDB 模型、mock/回放传输、B
 cmd/uf/                     uf --dry-run 计划 + --mock/--replay 写入状态机
 cmd/wasm/                   Go/WASM 核心导出（shell + ufPlan/ufRun/ufCancel/ufVerify/imageLoader/demoImage）
 cmd/genprotocol/            生成 web/app/protocol.js 与 web/probe/protocol.js
-web/app/                    页面：选系统 / 设备 / 日志（单列，底部固定操作栏）
+web/app/                    页面：三块（选系统 / 选设备 / 开始刷写）+ 日志（Etcher 式单列）
 web/app/images.js           镜像清单解析、CORS 探测、流式下载（File System Access API）
 web/app/brand.js            FydeOS / openFyde 官方品牌字形（内联 SVG，跟随主题色）
 web/app/images.json         官方镜像清单（品牌/版本/大小/sha256/URL/发布页）
