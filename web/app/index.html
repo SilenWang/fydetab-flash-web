@@ -1,11 +1,14 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f4f4f6" />
-    <title>Fydetab Duo 刷写工具</title>
+    <!-- The title and every visible string below are replaced at startup by
+         i18n.js (navigator.languages → zh | en, anything else → en). The copy
+         here is the English fallback for a browser that blocks module scripts. -->
+    <title>Fydetab Duo Flasher</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icons/icon-192.png" sizes="192x192" type="image/png" />
     <link rel="apple-touch-icon" href="./icons/icon-192.png" />
@@ -13,14 +16,14 @@
   </head>
   <body>
     <main class="stage">
-      <section class="flasher" aria-label="Fydetab Duo 刷写">
+      <section class="flasher" aria-label="Fydetab Duo flashing" data-i18n-aria-label="app.label">
         <header class="flasher-head">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
               <path d="M13 2 5 14h6l-1 8 8-12h-6l1-8Z" />
             </svg>
           </span>
-          <h1>Fydetab Duo 刷写</h1>
+          <h1 data-i18n="app.heading">Fydetab Duo Flasher</h1>
         </header>
 
         <div id="banner" class="banner" role="status" hidden></div>
@@ -36,7 +39,7 @@
               </svg>
             </span>
             <span id="tile-image-body" class="tile-body">
-              <span id="tile-image-title" class="tile-title">选择系统</span>
+              <span id="tile-image-title" class="tile-title" data-i18n="tile.image">Choose an image</span>
               <span id="tile-image-sub" class="tile-sub">FydeOS · openFyde</span>
             </span>
           </button>
@@ -49,8 +52,8 @@
               </svg>
             </span>
             <span id="tile-device-body" class="tile-body">
-              <span id="tile-device-title" class="tile-title">选择设备</span>
-              <span id="tile-device-sub" class="tile-sub">USB 连接</span>
+              <span id="tile-device-title" class="tile-title" data-i18n="tile.device">Choose a device</span>
+              <span id="tile-device-sub" class="tile-sub" data-i18n="tile.deviceSub">USB connection</span>
             </span>
           </button>
 
@@ -61,8 +64,8 @@
               </svg>
             </span>
             <span class="tile-body">
-              <span id="tile-write-title" class="tile-title">开始刷写</span>
-              <span id="cta-hint" class="tile-sub">先选系统</span>
+              <span id="tile-write-title" class="tile-title" data-i18n="action.start">Start flashing</span>
+              <span id="cta-hint" class="tile-sub" data-i18n="cta.pickImage">Choose an image first</span>
             </span>
           </button>
         </div>
@@ -70,19 +73,19 @@
         <!-- progress -------------------------------------------------------- -->
         <div id="download-progress" class="progress" hidden>
           <div class="progress-row">
-            <span class="progress-label">下载</span>
+            <span class="progress-label" data-i18n="progress.download">Download</span>
             <span class="track"><span id="download-bar" class="fill"></span></span>
-            <button id="btn-download-cancel" class="btn ghost small" type="button">取消</button>
+            <button id="btn-download-cancel" class="btn ghost small" type="button" data-i18n="action.cancel">Cancel</button>
           </div>
           <div class="progress-row">
             <p id="download-text" class="progress-text"></p>
-            <a id="download-fallback" class="link" target="_blank" rel="noreferrer" hidden>浏览器下载</a>
+            <a id="download-fallback" class="link" target="_blank" rel="noreferrer" hidden data-i18n="action.browserDownload">Browser download</a>
           </div>
         </div>
 
         <div id="verify-progress" class="progress" hidden>
           <div class="progress-row">
-            <span class="progress-label">校验</span>
+            <span class="progress-label" data-i18n="progress.verify">Verify</span>
             <span class="track small"><span id="verify-bar" class="fill"></span></span>
           </div>
           <p id="verify-progress-text" class="progress-text"></p>
@@ -91,7 +94,7 @@
         <div id="write-progress" class="progress" hidden>
           <div class="progress-row">
             <span class="track"><span id="write-bar" class="fill"></span></span>
-            <button id="btn-cancel-write" class="btn ghost small" type="button" hidden>取消</button>
+            <button id="btn-cancel-write" class="btn ghost small" type="button" hidden data-i18n="action.cancel">Cancel</button>
           </div>
           <p id="write-progress-text" class="progress-text"></p>
         </div>
@@ -100,11 +103,11 @@
 
         <!-- reconnecting ---------------------------------------------------- -->
         <div id="reconnect" class="reconnect" hidden>
-          <p class="reconnect-title">设备已断开</p>
+          <p class="reconnect-title" data-i18n="reconnect.title">Device disconnected</p>
           <ol id="reconnect-steps"></ol>
           <div class="row-actions">
-            <button id="btn-reconnect-auth" class="btn secondary small" type="button">重新连接</button>
-            <button id="btn-reconnect-dismiss" class="btn ghost small" type="button">稍后</button>
+            <button id="btn-reconnect-auth" class="btn secondary small" type="button" data-i18n="action.reconnect">Reconnect</button>
+            <button id="btn-reconnect-dismiss" class="btn ghost small" type="button" data-i18n="action.later">Later</button>
           </div>
         </div>
 
@@ -115,20 +118,20 @@
           <div id="erase-row" class="erase-row" hidden>
             <p id="erase-title" class="erase-title"></p>
             <div class="erase-controls">
-              <select id="erase-mode" aria-label="没覆盖到的空间怎么处理">
-                <option value="none">保持原样</option>
-                <option value="fill">填 0xFF</option>
-                <option value="erase-lba">整段擦除</option>
+              <select id="erase-mode" aria-label="How to handle the space the image does not cover" data-i18n-aria-label="erase.ariaLabel">
+                <option value="none" data-i18n="erase.none">Leave as is</option>
+                <option value="fill" data-i18n="erase.fill">Fill with 0xFF</option>
+                <option value="erase-lba" data-i18n="erase.eraseLba">Erase the range</option>
               </select>
               <label class="check-inline">
                 <input id="chk-erase-confirm" type="checkbox" />
-                <span>就按这个处理</span>
+                <span data-i18n="erase.confirm">Handle it that way</span>
               </label>
             </div>
           </div>
 
           <div id="write-failure" class="failure" hidden>
-            <strong id="write-failure-title">刷写失败</strong>
+            <strong id="write-failure-title" data-i18n="write.failed">Write failed</strong>
             <p id="write-failure-detail"></p>
             <ol id="write-failure-steps"></ol>
           </div>
@@ -137,25 +140,25 @@
         <!-- log ------------------------------------------------------------- -->
         <section class="log" aria-labelledby="h-log">
           <div class="log-head">
-            <button id="btn-toggle-log" class="log-toggle" type="button" aria-expanded="false" aria-label="展开日志">
-              <h2 id="h-log">日志</h2>
+            <button id="btn-toggle-log" class="log-toggle" type="button" aria-expanded="false" aria-label="Expand log" data-i18n-aria-label="log.expand">
+              <h2 id="h-log" data-i18n="log.title">Log</h2>
               <span id="log-count" class="log-count"></span>
             </button>
             <span class="spacer"></span>
-            <button id="btn-export-log" class="btn ghost small" type="button" hidden>导出</button>
+            <button id="btn-export-log" class="btn ghost small" type="button" hidden data-i18n="action.export">Export</button>
           </div>
           <div id="log-body" class="log-body" hidden>
             <ol id="log-lines" class="log-lines" aria-live="polite"></ol>
-            <p id="log-empty" class="muted">还没有记录。</p>
+            <p id="log-empty" class="muted" data-i18n="log.empty">Nothing logged yet.</p>
           </div>
         </section>
       </section>
 
       <footer class="page-foot">
-        <p>固件来自 FydeOS 与 openFyde 官方发布页。</p>
+        <p data-i18n="footer.source">Firmware comes from the official FydeOS and openFyde release pages.</p>
         <p class="foot-actions">
-          <button id="btn-install" class="btn ghost small" type="button" hidden>安装到桌面</button>
-          <button id="btn-reload-app" class="btn ghost small" type="button" hidden>刷新页面</button>
+          <button id="btn-install" class="btn ghost small" type="button" hidden data-i18n="action.install">Install</button>
+          <button id="btn-reload-app" class="btn ghost small" type="button" hidden data-i18n="action.reload">Reload</button>
           <span id="install-note" class="note"></span>
         </p>
       </footer>
@@ -164,26 +167,26 @@
     <!-- 1 · image --------------------------------------------------------- -->
     <dialog id="image-dialog" class="dialog">
       <div class="dialog-head">
-        <h2>选择系统</h2>
-        <button id="btn-close-image" class="btn ghost small" type="button">关闭</button>
+        <h2 data-i18n="dialog.imageTitle">Choose an image</h2>
+        <button id="btn-close-image" class="btn ghost small" type="button" data-i18n="action.close">Close</button>
       </div>
       <div class="dialog-body">
         <div id="image-choices" class="choices">
-          <p class="muted">正在读取版本…</p>
+          <p class="muted" data-i18n="dialog.readingVersions">Reading versions…</p>
         </div>
         <ul id="version-list" class="versions"></ul>
       </div>
       <div class="dialog-foot">
-        <button id="btn-pick-image" class="btn secondary small" type="button">选择本地文件</button>
-        <span class="note">也可以把镜像文件直接拖到页面上</span>
+        <button id="btn-pick-image" class="btn secondary small" type="button" data-i18n="action.pickLocal">Choose a local file</button>
+        <span class="note" data-i18n="dialog.dropHint">You can also drag an image file onto the page</span>
       </div>
     </dialog>
 
     <!-- 2 · device -------------------------------------------------------- -->
     <dialog id="device-dialog" class="dialog">
       <div class="dialog-head">
-        <h2>选择设备</h2>
-        <button id="btn-close-device" class="btn ghost small" type="button">关闭</button>
+        <h2 data-i18n="dialog.deviceTitle">Choose a device</h2>
+        <button id="btn-close-device" class="btn ghost small" type="button" data-i18n="action.close">Close</button>
       </div>
       <div class="dialog-body">
         <ul id="devices" class="devices"></ul>
@@ -197,14 +200,14 @@
             </svg>
           </span>
           <span class="target-text">
-            <span class="target-title">连接设备</span>
-            <span class="target-sub">用 USB 线把 Fydetab Duo 接到电脑</span>
+            <span class="target-title" data-i18n="dialog.connectTitle">Connect a device</span>
+            <span class="target-sub" data-i18n="dialog.connectSub">Plug the Fydetab Duo into this computer with a USB cable</span>
           </span>
         </button>
       </div>
       <div class="dialog-foot">
-        <button id="btn-refresh" class="btn secondary small" type="button">刷新</button>
-        <span class="note">刷写会清除设备上的原有系统</span>
+        <button id="btn-refresh" class="btn secondary small" type="button" data-i18n="action.refresh">Refresh</button>
+        <span class="note" data-i18n="dialog.wipeNote">Flashing erases the system already on the device</span>
       </div>
     </dialog>
 

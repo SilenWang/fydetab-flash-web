@@ -9,6 +9,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+// The checks below assert the Chinese copy, so pin the language instead of
+// depending on the machine's navigator.languages.
+import { setLocale } from '../i18n.js';
+
+setLocale('zh');
+
 import {
   ROCKCHIP_VENDOR_ID,
   describeUsbDevice,

@@ -24,6 +24,7 @@ import {
   readZipDirectory,
   supportedMethod,
 } from './zip.js';
+import { t as translate } from './i18n.js';
 
 // RKFW header (0x66) + an RKAF header (2048) is the smallest thing rkfw will
 // accept, so anything smaller cannot be the image inside the package.
@@ -48,7 +49,7 @@ async function readBlobRange(blob, offset, length) {
  * structured-cloned and passed through syscall/js without a class identity.
  */
 class EntrySource {
-  constructor(blob, entry, range, { name, size, windowBytes }) {
+  constructor(blob, entry, range, { name, size, windowBytes, t }) {
     this.blob = blob;
     this.entry = entry;
     this.range = range;
@@ -56,6 +57,7 @@ class EntrySource {
     this.size = size;
     this.method = entry.method;
     this.windowBytes = windowBytes;
+    this.t = t;
     this.reader = null;
     this.chunks = [];
     this.cacheStart = 0;
@@ -77,7 +79,7 @@ class EntrySource {
   async read(offset, length) {
     const start = Number(offset);
     const want = Math.max(0, Math.min(Number(length) || 0, this.size - start));
-    if (!Number.isFinite(start) || start < 0) throw new RangeError(`zip: negative read offset ${offset}`);
+    if (!Number.isFinite(start) || start < 0) throw new RangeError(this.t('zip-source.negativeOffset', { offset }));
     if (want === 0) return new Uint8Array(0);
 
     if (this.method === ZIP_METHOD_STORE) {
@@ -112,7 +114,7 @@ class EntrySource {
     try {
       result = await this.reader.read();
     } catch (err) {
-      throw new Error(`zip: 解压 ${this.entry.name} 失败（deflate 流损坏？）：${err?.message ?? err}`);
+      throw new Error(this.t('zip-source.deflateFailed', { name: this.entry.name, error: err?.message ?? err }));
     }
     if (result.done) {
       this.ended = true;
@@ -177,20 +179,21 @@ class EntrySource {
 /**
  * openEntrySource exposes one zip entry as {name, size, read(offset,length)}.
  */
-export async function openEntrySource(blob, entry, { name, windowBytes = DEFAULT_WINDOW_BYTES } = {}) {
-  if (entry.dir) throw new Error(`zip: ${entry.name} 是目录，不是文件`);
-  if (entry.encrypted) throw new Error(`zip: ${entry.name} 已加密，页面无法读取`);
+export async function openEntrySource(blob, entry, { name, windowBytes = DEFAULT_WINDOW_BYTES, t = translate } = {}) {
+  if (entry.dir) throw new Error(t('zip-source.notFile', { name: entry.name }));
+  if (entry.encrypted) throw new Error(t('zip-source.encrypted', { name: entry.name }));
   if (!supportedMethod(entry.method)) {
-    throw new Error(`zip: ${entry.name} 使用了 ${methodName(entry.method)} 压缩，本页只支持 stored 与 deflate`);
+    throw new Error(t('zip-source.method', { name: entry.name, method: methodName(entry.method) }));
   }
   if (!(entry.uncompressedSize > 0)) {
-    throw new Error(`zip: ${entry.name} 在中央目录里报告 0 字节（可能由流式写入产生），无法作为镜像读取`);
+    throw new Error(t('zip-source.emptyEntry', { name: entry.name }));
   }
   const range = await entryDataRange(blob, entry);
   const source = new EntrySource(blob, entry, range, {
     name: name ?? entry.name,
     size: entry.uncompressedSize,
     windowBytes,
+    t,
   });
   if (entry.method !== ZIP_METHOD_STORE) await source._reopen();
 
@@ -218,7 +221,7 @@ export async function openEntrySource(blob, entry, { name, windowBytes = DEFAULT
  * under names that say nothing. The first RKFW entry wins (a complete
  * update.img); a bare RKAF entry is only used when no RKFW entry exists.
  */
-export async function openZipImage(blob, zipName = 'package.zip') {
+export async function openZipImage(blob, zipName = 'package.zip', { t = translate } = {}) {
   const directory = await readZipDirectory(blob);
   const skipped = [];
   let bare = null;
@@ -227,21 +230,26 @@ export async function openZipImage(blob, zipName = 'package.zip') {
   for (const entry of directory.entries) {
     if (entry.dir) continue;
     if (entry.encrypted || !supportedMethod(entry.method)) {
-      skipped.push({ entry: entry.name, reason: entry.encrypted ? '加密' : `不支持的压缩 ${methodName(entry.method)}` });
+      skipped.push({
+        entry: entry.name,
+        reason: entry.encrypted
+          ? t('zip-source.skip.encrypted')
+          : t('zip-source.skip.method', { method: methodName(entry.method) }),
+      });
       continue;
     }
     if (!(entry.uncompressedSize >= MIN_IMAGE_BYTES)) {
-      skipped.push({ entry: entry.name, reason: `${entry.uncompressedSize} B，小于 RKFW/RKAF 头部` });
+      skipped.push({ entry: entry.name, reason: t('zip-source.skip.tooSmall', { size: `${entry.uncompressedSize} B` }) });
       continue;
     }
     candidates += 1;
     if (candidates > MAX_CANDIDATES) {
-      throw new Error(`zip: 候选条目超过 ${MAX_CANDIDATES} 个，这不是一个固件包`);
+      throw new Error(t('zip-source.skip.tooManyCandidates', { max: MAX_CANDIDATES }));
     }
 
     let source = null;
     try {
-      source = await openEntrySource(blob, entry, { name: `${zipName} → ${entry.name}` });
+      source = await openEntrySource(blob, entry, { name: `${zipName} → ${entry.name}`, t });
       const head = await source.read(0, 4);
       const magic = String.fromCharCode(...head);
       if (magic === 'RKFW') {
@@ -252,7 +260,7 @@ export async function openZipImage(blob, zipName = 'package.zip') {
         continue;
       }
       await source.close();
-      skipped.push({ entry: entry.name, reason: `内容以 ${JSON.stringify(magic)} 开头，不是 RKFW/RKAF` });
+      skipped.push({ entry: entry.name, reason: t('zip-source.skip.magic', { magic: JSON.stringify(magic) }) });
     } catch (err) {
       if (source) await source.close();
       skipped.push({ entry: entry.name, reason: err?.message ?? String(err) });
@@ -260,19 +268,30 @@ export async function openZipImage(blob, zipName = 'package.zip') {
   }
 
   if (bare) return { ...bare, skippedDetail: bare.skipped };
-  const detail = skipped.length > 0 ? `：${skipped.map((s) => `${s.entry}（${s.reason}）`).join('；')}` : '';
-  throw new Error(`zip: ${zipName} 里没有 RKFW/RKAF 镜像条目${detail}`);
+  const detail =
+    skipped.length > 0
+      ? t('zip-source.summary.detail', {
+          list: skipped.map((s) => `${s.entry}${t('zip-source.paren', { value: s.reason })}`).join(t('zip-source.listSeparator')),
+        })
+      : '';
+  throw new Error(t('zip-source.noImage', { name: zipName, detail }));
 }
 
 /** summarizePackage is the human-readable line the page shows after opening. */
-export function summarizePackage({ directory, entry, source, skipped }) {
+export function summarizePackage({ directory, entry, source, skipped }, { t = translate } = {}) {
   const parts = [
-    `zip: ${entry.name} · ${source.entry.method} · ${formatBytes(source.entry.compressedSize)} → ${formatBytes(
-      source.entry.uncompressedSize,
-    )}`,
-    `目录 ${directory.entries.length} 项${directory.zip64 ? ' · ZIP64' : ''}`,
+    t('zip-source.summary.head', {
+      name: entry.name,
+      method: source.entry.method,
+      compressed: formatBytes(source.entry.compressedSize),
+      uncompressed: formatBytes(source.entry.uncompressedSize),
+    }),
+    t('zip-source.summary.directory', {
+      count: directory.entries.length,
+      zip64: directory.zip64 ? t('zip-source.summary.zip64') : '',
+    }),
   ];
-  if (skipped.length > 0) parts.push(`跳过 ${skipped.length} 项`);
+  if (skipped.length > 0) parts.push(t('zip-source.summary.skipped', { count: skipped.length }));
   return parts.join(' · ');
 }
 

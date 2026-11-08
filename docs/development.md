@@ -63,6 +63,9 @@ pixi run test
     必须显式确认、LOADER 态可读可写。
   - `uf.test.mjs`：**真实 wasm 核心**的 `ufPlan` / `ufRun`（mock 模拟器）——镜像自带 loader 身份、计划来自
     parameter、`db → gpt → wl → rd` 全流程与进度事件。
+  - `i18n.test.mjs`：语言匹配顺序（`navigator.languages` → `language` → 英文回退）、`?lang=` 覆盖、
+    两份资源的 key / `{placeholder}` 双向一致、`t()` 插值与缺失回退、`applyDocument()` 写回
+    `<html lang>` 与带 `data-i18n*` 的节点，以及“模块和 `index.html` 里不留硬编码文案”的扫描。
 
 ## CI 与部署
 

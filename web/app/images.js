@@ -14,6 +14,10 @@
 //
 // Everything here takes its browser surface as an argument (fetch, picker), so
 // the logic is testable in node without a DOM. app.js supplies the real ones.
+// User-visible text comes from ./i18n.js; each entry point takes a `t` so a
+// test can pin the language.
+
+import { t as translate } from './i18n.js';
 
 /** CATALOG_URL is relative to the page (/app/). */
 export const CATALOG_URL = './images.json';
@@ -68,17 +72,17 @@ export function normaliseEntry(raw, index) {
  * returns the usable entries plus what was dropped, so the page can log a
  * broken catalogue instead of silently showing nothing.
  */
-export function parseCatalog(input) {
+export function parseCatalog(input, { t = translate } = {}) {
   let raw = input;
   if (typeof input === 'string') {
     try {
       raw = JSON.parse(input);
     } catch (err) {
-      return { ok: false, error: `镜像清单不是合法 JSON：${err.message}`, entries: [], dropped: [] };
+      return { ok: false, error: t('images.catalog.badJson', { error: err.message }), entries: [], dropped: [] };
     }
   }
   if (!isPlainObject(raw) || !Array.isArray(raw.images)) {
-    return { ok: false, error: '镜像清单缺少 images 数组', entries: [], dropped: [] };
+    return { ok: false, error: t('images.catalog.missingImages'), entries: [], dropped: [] };
   }
   const entries = [];
   const dropped = [];
@@ -98,14 +102,16 @@ export function parseCatalog(input) {
 }
 
 /** loadCatalog fetches and parses images.json (precached by sw.js). */
-export async function loadCatalog({ fetchImpl = globalThis.fetch, url = CATALOG_URL, signal } = {}) {
-  if (typeof fetchImpl !== 'function') return { ok: false, error: '没有 fetch：无法读取镜像清单', entries: [], dropped: [] };
+export async function loadCatalog({ fetchImpl = globalThis.fetch, url = CATALOG_URL, signal, t = translate } = {}) {
+  if (typeof fetchImpl !== 'function') return { ok: false, error: t('images.catalog.noFetch'), entries: [], dropped: [] };
   try {
     const response = await fetchImpl(url, { signal });
-    if (!response.ok) return { ok: false, error: `读取镜像清单失败：HTTP ${response.status}`, entries: [], dropped: [] };
-    return parseCatalog(await response.text());
+    if (!response.ok) {
+      return { ok: false, error: t('images.catalog.http', { status: response.status }), entries: [], dropped: [] };
+    }
+    return parseCatalog(await response.text(), { t });
   } catch (err) {
-    return { ok: false, error: `读取镜像清单失败：${err?.message ?? err}`, entries: [], dropped: [] };
+    return { ok: false, error: t('images.catalog.fetchFailed', { error: err?.message ?? err }), entries: [], dropped: [] };
   }
 }
 
@@ -113,7 +119,7 @@ export async function loadCatalog({ fetchImpl = globalThis.fetch, url = CATALOG_
  * capabilityReport says what this browser can do. `save` is the one that
  * matters: without it a multi-GiB download would have to be buffered.
  */
-export function capabilityReport(env = globalThis) {
+export function capabilityReport(env = globalThis, { t = translate } = {}) {
   const save = typeof env.showSaveFilePicker === 'function';
   const open = typeof env.showOpenFilePicker === 'function';
   const streams = typeof env.ReadableStream === 'function' && typeof env.WritableStream === 'function';
@@ -124,7 +130,7 @@ export function capabilityReport(env = globalThis) {
     // Chromium-only surfaces; the page must say so rather than disable a
     // button without a word.
     chromiumOnly: !save || !streams,
-    advice: save && streams ? '' : '这个浏览器不支持 File System Access API（流式写盘）：请用桌面版 Chrome / Edge 下载，或手动下载后用“选择本地镜像”。',
+    advice: save && streams ? '' : t('images.advice.chromium'),
   };
 }
 
@@ -149,17 +155,17 @@ export function formatSpeed(bytesPerSec) {
   return `${formatBytes(bytesPerSec)}/s`;
 }
 
-/** formatDuration renders seconds as "1 分 05 秒" / "12 秒". */
-export function formatDuration(seconds) {
+/** formatDuration renders seconds in the active language ("1m 05s" / "1 分 05 秒"). */
+export function formatDuration(seconds, { t = translate } = {}) {
   if (!Number.isFinite(seconds) || seconds < 0) return '—';
-  if (seconds < 1) return '<1 秒';
+  if (seconds < 1) return t('time.lessThanSecond');
   const total = Math.round(seconds);
-  if (total < 60) return `${total} 秒`;
+  if (total < 60) return t('time.seconds', { count: total });
   const minutes = Math.floor(total / 60);
   const rest = total % 60;
-  if (minutes < 60) return `${minutes} 分 ${String(rest).padStart(2, '0')} 秒`;
+  if (minutes < 60) return t('time.minutes', { minutes, seconds: String(rest).padStart(2, '0') });
   const hours = Math.floor(minutes / 60);
-  return `${hours} 时 ${String(minutes % 60).padStart(2, '0')} 分`;
+  return t('time.hours', { hours, minutes: String(minutes % 60).padStart(2, '0') });
 }
 
 /**
@@ -217,13 +223,16 @@ async function attemptFetch(fetchImpl, url, init) {
  * even when the status is 200, so the header is checked explicitly instead of
  * trusting `response.ok`.
  */
-export async function probeCors(url, { fetchImpl = globalThis.fetch, base = globalThis.location?.href ?? 'http://localhost/', signal } = {}) {
+export async function probeCors(
+  url,
+  { fetchImpl = globalThis.fetch, base = globalThis.location?.href ?? 'http://localhost/', signal, t = translate } = {},
+) {
   const absolute = absoluteURL(url, base);
   if (sameOrigin(absolute, base)) {
-    return { direct: true, url: absolute, sameOrigin: true, reason: '同源文件，浏览器可以直接读取。' };
+    return { direct: true, url: absolute, sameOrigin: true, reason: t('images.probe.sameOrigin') };
   }
   if (typeof fetchImpl !== 'function') {
-    return { direct: false, url: absolute, sameOrigin: false, reason: '没有 fetch：无法探测该地址。' };
+    return { direct: false, url: absolute, sameOrigin: false, reason: t('images.probe.noFetch') };
   }
 
   const head = await attemptFetch(fetchImpl, absolute, { method: 'HEAD', mode: 'cors', signal });
@@ -252,14 +261,17 @@ export async function probeCors(url, { fetchImpl = globalThis.fetch, base = glob
         direct: false,
         url: absolute,
         sameOrigin: false,
-        reason: `浏览器被 CORS 拦下（fetch 失败）：${head.error?.message ?? head.error}。服务器需要返回 Access-Control-Allow-Origin。`,
+        reason: t('images.probe.cors', { error: head.error?.message ?? head.error }),
       };
     } else {
       return {
         direct: false,
         url: absolute,
         sameOrigin: false,
-        reason: `服务器拒绝了探测请求（HEAD ${head.response?.status ?? '?'} / GET ${got.response?.status ?? '?'}）。`,
+        reason: t('images.probe.rejected', {
+          head: head.response?.status ?? '?',
+          get: got.response?.status ?? '?',
+        }),
       };
     }
   }
@@ -276,7 +288,7 @@ export async function probeCors(url, { fetchImpl = globalThis.fetch, base = glob
       method,
       contentLength: Number.isFinite(contentLength) ? contentLength : null,
       contentType,
-      reason: '响应没有 Access-Control-Allow-Origin：浏览器不能直接读取，已改为在新标签页打开。',
+      reason: t('images.probe.noAcao'),
     };
   }
   return {
@@ -288,7 +300,7 @@ export async function probeCors(url, { fetchImpl = globalThis.fetch, base = glob
     allowOrigin: allow,
     contentLength: Number.isFinite(contentLength) ? contentLength : null,
     contentType,
-    reason: `服务器允许跨域读取（Access-Control-Allow-Origin: ${allow}）。`,
+    reason: t('images.probe.allowed', { origin: allow }),
   };
 }
 
@@ -310,24 +322,28 @@ export async function downloadEntry(
     signal,
     now = () => performance.now(),
     progressIntervalMs = 250,
+    t = translate,
   } = {},
 ) {
-  if (!entry || typeof entry !== 'object') return { ok: false, kind: 'bad-entry', reason: '清单条目无效' };
+  if (!entry || typeof entry !== 'object') return { ok: false, kind: 'bad-entry', reason: t('images.badEntry') };
   if (!entry.url) {
     return {
       ok: false,
       kind: 'no-url',
-      reason: entry.page ? '这份清单没有收录直链：请从厂商下载页获取，或点右侧链接自行下载。' : '这份清单没有收录直链：请手动下载后用“选择本地镜像”。',
+      reason: t(entry.page ? 'images.noUrl.withPage' : 'images.noUrl.plain'),
       page: entry.page ?? null,
     };
   }
 
-  const caps = capabilityReport({ showSaveFilePicker: savePicker, ReadableStream: globalThis.ReadableStream, WritableStream: globalThis.WritableStream });
+  const caps = capabilityReport(
+    { showSaveFilePicker: savePicker, ReadableStream: globalThis.ReadableStream, WritableStream: globalThis.WritableStream },
+    { t },
+  );
   if (!caps.save) {
     return { ok: false, kind: 'unsupported', reason: caps.advice, url: absoluteURL(entry.url, base) };
   }
 
-  const probe = await probeCors(entry.url, { fetchImpl, base, signal });
+  const probe = await probeCors(entry.url, { fetchImpl, base, signal, t });
   onProbe?.(probe);
   if (!probe.direct) {
     return { ok: false, kind: 'cors', reason: probe.reason, url: probe.url, probe };
@@ -340,7 +356,10 @@ export async function downloadEntry(
     return {
       ok: false,
       kind: err?.name === 'AbortError' ? 'cancelled' : 'picker',
-      reason: err?.name === 'AbortError' ? '已取消保存位置选择。' : `无法打开保存位置选择器：${err?.message ?? err}`,
+      reason:
+        err?.name === 'AbortError'
+          ? t('images.picker.cancelled')
+          : t('images.picker.failed', { error: err?.message ?? err }),
       url: probe.url,
     };
   }
@@ -356,7 +375,7 @@ export async function downloadEntry(
     if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText ?? ''}`.trim());
     const declared = Number(response.headers?.get?.('content-length') ?? NaN);
     if (Number.isFinite(declared) && declared > 0) total = declared;
-    if (!response.body) throw new Error('响应没有 body：无法流式写盘');
+    if (!response.body) throw new Error(t('images.transfer.noBody'));
 
     const reader = response.body.getReader();
     for (;;) {
@@ -382,7 +401,7 @@ export async function downloadEntry(
     return {
       ok: false,
       kind: 'transfer',
-      reason: `下载失败：${err?.message ?? err}`,
+      reason: t('images.transfer.failed', { error: err?.message ?? err }),
       url: probe.url,
       received,
       total,

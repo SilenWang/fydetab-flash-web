@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+// The checks below assert the Chinese copy, so pin the language instead of
+// depending on the machine's navigator.languages.
+import { setLocale } from '../i18n.js';
+
+setLocale('zh');
+
 import { createWebUSBHost, describeDevice, findRockusbInterface, ROCKCHIP_VENDOR_ID } from '../usb-host.js';
 
 function fakeDevice({ vendorId = ROCKCHIP_VENDOR_ID, productId = 0x350b, subminor = 0, serialNumber = 'SN1' } = {}) {
