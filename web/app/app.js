@@ -237,8 +237,9 @@ function renderLogCount() {
   if (!ui.logBody.hidden && log.size > 0) parts.unshift(`${log.size} 条`);
   ui.logCount.textContent = parts.join(' · ');
   ui.logEmpty.hidden = log.size > 0;
-  // Nothing recorded yet: an export button would produce an empty file.
-  ui.exportLog.hidden = log.size === 0;
+  // Export belongs to reading the log: collapsed or empty, there is nothing to
+  // act on, so the button stays out of the way.
+  ui.exportLog.hidden = ui.logBody.hidden || log.size === 0;
 }
 
 function initLogPanel() {
@@ -1390,7 +1391,7 @@ function updateButtons(precomputed) {
   ui.fileImage.disabled = state.ufRunning;
   ui.downloadCancel.disabled = !state.download.running;
   ui.writeButton.disabled = !result.canWrite;
-  ui.writeButton.dataset.running = String(state.ufRunning);
+  ui.writeButton.dataset.state = state.ufRunning ? 'running' : state.writeDone ? 'done' : '';
   ui.writeTitle.textContent = state.ufRunning ? '刷写中…' : state.writeDone ? '刷写完成' : '开始刷写';
   ui.cancelWrite.disabled = !state.ufRunning;
   ui.cancelWrite.hidden = !state.ufRunning;
@@ -1676,4 +1677,3 @@ async function main() {
 }
 
 main();
-

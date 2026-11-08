@@ -249,6 +249,26 @@ body.dragging #btn-image {
 .tile-flash:disabled .tile-icon { color: var(--text-3); background: var(--surface); }
 .tile-flash:disabled .tile-sub { color: var(--text-2); }
 
+/* Writing and finished are still the same action: the tile keeps the brand
+   colour while it is inert, so the page never looks like it lost the job. */
+.tile-flash[data-state="running"],
+.tile-flash[data-state="running"]:disabled,
+.tile-flash[data-state="done"],
+.tile-flash[data-state="done"]:disabled {
+  background: var(--brand);
+  color: #fff;
+  cursor: default;
+}
+
+.tile-flash[data-state="running"] .tile-icon,
+.tile-flash[data-state="done"] .tile-icon {
+  color: var(--brand);
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.tile-flash[data-state="running"] .tile-sub,
+.tile-flash[data-state="done"] .tile-sub { color: #fff; }
+
 /* --------------------------------------------------------------- buttons */
 
 .btn {
