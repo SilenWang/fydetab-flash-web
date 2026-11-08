@@ -178,7 +178,7 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
         `${uncovered.length} 段共 ${formatBytes(total)} 不会被镜像写入：${uncovered
           .slice(0, 3)
           .map((range) => `${range.partition} ${formatBytes(range.bytes)}`)
-          .join('、')}${uncovered.length > 3 ? ' …' : ''}（处置在第 4 块显式选择）`,
+          .join('、')}${uncovered.length > 3 ? ' …' : ''}（处置在刷写块显式选择）`,
       ),
     );
   } else {

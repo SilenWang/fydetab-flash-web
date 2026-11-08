@@ -1,13 +1,11 @@
-// Main-thread controller for the M4b page: five blocks, one flow.
+// Main-thread controller for the M4b page: three blocks, one flow.
 //
 //   1 镜像      catalogue download (CORS-probed, streamed to disk) or a local
-//               .img/.zip
-//   2 校验      structure + PARM CRC always; RKAF CRC + whole-image MD5 when
-//               the measured throughput says they fit in the 2-minute budget
-//   3 设备      every authorised 0x2207 device, merged with the core's `ld`
-//               view, with the re-enumeration rules
-//   4 刷写      one button, gated by preflight.js (nothing was loosened)
-//   5 日志      every operation, timestamped, exportable as text or NDJSON
+//               .img/.zip, with verification folded in (it starts automatically
+//               once an image is chosen)
+//   2 刷写      every authorised 0x2207 device with the re-enumeration rules,
+//               one write button gated by preflight.js (nothing was loosened)
+//   3 日志      every operation, timestamped, exportable as text or NDJSON
 //
 // The protocol decisions all live elsewhere: WebUSB in usb-host.js, the write
 // state machine in the Go/WASM core, the gates in preflight.js. This file owns
@@ -727,7 +725,7 @@ async function chooseImage(file, meta = {}) {
     );
   }
   if (state.imageMeta.sha256) {
-    log.info('image', `清单 sha256：${state.imageMeta.sha256}（页面不重算整个文件的 sha256；镜像内 MD5/PARM CRC 由第 2 块校验）`);
+    log.info('image', `清单 sha256：${state.imageMeta.sha256}（页面不重算整个文件的 sha256；镜像内 MD5/PARM CRC 由下方校验完成）`);
   }
   resetEraseChoice();
   await planImage();
@@ -1387,7 +1385,7 @@ function renderReconnect() {
   const steps = [
     cause,
     '点“重新授权”，在浏览器弹窗里重新选择 0x2207 设备（重新枚举会撤销上一次的实例授权）。',
-    '授权后页面自动 ld；第 3 块的设备列表会重新出现，选一个继续。',
+    '授权后页面自动 ld；刷写块的设备列表会重新出现，选一个继续。',
   ];
   if (r.attempts >= 3) {
     steps.push('已经重连 3 次以上：检查 USB 线与供电，Linux 上确认 udev 规则（docs/webusb-drivers.md），Windows 上确认驱动是 WinUSB。');
@@ -1578,7 +1576,7 @@ function renderUfResult(result) {
       'write',
       `刷写完成：写入 ${formatBytes(run.bytesWritten)} · 擦除 ${formatBytes(run.bytesErased)} · ${(run.durationMs / 1000).toFixed(1)}s`,
     );
-    setBanner('刷写完成。设备复位后会重新枚举为 LOADER；第 3 块刷新后可以复查。', 'info');
+    setBanner('刷写完成。设备复位后会重新枚举为 LOADER；刷新后可以复查。', 'info');
     appendUf('写入完成。设备复位后会重新枚举为 LOADER；点“添加设备”后刷新可复查。');
   } else {
     renderWriteFailure(run.error ?? { codeName: 'WRITE_FAILED', detail: '写入未完成' });
@@ -1606,9 +1604,9 @@ function renderWriteFailure(error = {}) {
   ui.writeFailureDetail.textContent = [error.detail, error.hint].filter(Boolean).join(' ');
   const steps = [
     '先点“开始刷写”重试一次：状态机会自己重新 db，不需要手动复位。',
-    '设备掉出列表时：断电重进 maskrom（按住恢复键上电）→ 第 3 块“添加设备”重新授权 → 重新选设备。',
+    '设备掉出列表时：断电重进 maskrom（按住恢复键上电）→ 点“添加设备”重新授权 → 重新选设备。',
     '换一根数据线 / 换一个 USB 口（USB 2.0 口更稳），不要经过 hub。',
-    '把第 5 块导出的 NDJSON 日志附到 issue 里：里面有每一步的命令、进度和错误码。',
+    '把日志块导出的 NDJSON 附到 issue 里：里面有每一步的命令、进度和错误码。',
   ];
   ui.writeFailureSteps.replaceChildren(
     ...steps.map((text) => {
@@ -2082,11 +2080,9 @@ function wireEvents() {
 
 async function main() {
   initLogPanel();
-  log.info('app', '页面启动：五个区块，一条主流程（镜像 → 校验 → 设备 → 刷写 → 日志）');
+  log.info('app', '页面启动：三个区块，一条主流程（镜像 → 刷写 → 日志）');
   const caps = capabilityReport(globalThis);
-  ui.fsaNote.textContent = caps.save
-    ? '浏览器支持 File System Access API：下载可以流式写入你选择的位置，8 GiB 镜像不会进内存。'
-    : caps.advice;
+  ui.fsaNote.textContent = caps.save ? '' : caps.advice;
   if (!caps.save) log.warn('download', caps.advice);
 
   checkSupport();

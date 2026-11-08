@@ -15,7 +15,7 @@
     <header class="page-header">
       <div class="title">
         <h1>Fydetab WebFlasher</h1>
-        <p class="subtitle">选镜像 → 校验 → 选设备 → 刷写。全程在本机浏览器里完成，不需要后端。</p>
+        <p class="subtitle">在浏览器里为 Fydetab Duo 下载镜像并刷写，全程本机完成。</p>
       </div>
       <div class="badges">
         <span id="mode-badge" class="badge muted" data-mode="none">无设备</span>
@@ -30,28 +30,19 @@
       <!-- 1 · 镜像 -->
       <section class="panel block" id="block-image">
         <h2><span class="step">1</span>镜像</h2>
-        <p class="hint">选一个官方镜像下载，或者直接用手上已有的 <code>.img</code> / <code>.zip</code>。选好后第 2 块会自动开始校验。</p>
 
-        <div class="block-body">
-          <div class="field-block">
-            <h3>官方镜像</h3>
-            <div id="image-catalog" class="catalog"><p class="muted">正在读取镜像清单…</p></div>
-            <p id="catalog-note" class="hint"></p>
-          </div>
+        <div id="image-catalog" class="catalog"><p class="muted">正在读取镜像清单…</p></div>
+        <p id="catalog-note" class="hint"></p>
 
-          <div class="field-block">
-            <h3>使用本地镜像</h3>
-            <div class="controls">
-              <button id="btn-pick-image" type="button" class="primary">选择本地镜像…</button>
-              <label class="file">
-                <input id="file-image" type="file" accept=".img,.bin,.zip,application/octet-stream,application/zip" />
-                <span id="image-label">选择 update.img 或官方 .zip…</span>
-              </label>
-              <button id="btn-demo-image" type="button" hidden>载入演示镜像</button>
-            </div>
-            <p id="fsa-note" class="hint"></p>
-          </div>
+        <div class="controls">
+          <button id="btn-pick-image" type="button" class="primary">选择本地镜像…</button>
+          <label class="file">
+            <input id="file-image" type="file" accept=".img,.bin,.zip,application/octet-stream,application/zip" />
+            <span id="image-label">选择 update.img 或官方 .zip…</span>
+          </label>
+          <button id="btn-demo-image" type="button" hidden>载入演示镜像</button>
         </div>
+        <p id="fsa-note" class="hint"></p>
 
         <pre id="image-summary" class="summary">尚未选择镜像。</pre>
         <pre id="zip-summary" class="summary" hidden></pre>
@@ -63,67 +54,54 @@
             <a id="download-fallback" class="button-link" target="_blank" rel="noreferrer" hidden>在新标签页打开下载</a>
           </div>
         </div>
+
+        <div class="verify">
+          <div class="controls">
+            <label class="toggle">
+              <input id="chk-full-verify" type="checkbox" checked />
+              完整校验
+            </label>
+            <button id="btn-verify" type="button" disabled>开始校验</button>
+          </div>
+          <p id="verify-hint" class="hint"></p>
+          <div id="verify-progress" class="progress" hidden>
+            <div class="bar"><span id="verify-bar"></span></div>
+            <p id="verify-progress-text" class="progress-text"></p>
+          </div>
+          <ul id="verify-checks" class="checklist"></ul>
+          <p id="verify-summary" class="hint"></p>
+        </div>
       </section>
 
-      <!-- 2 · 校验 -->
-      <section class="panel block" id="block-verify">
-        <h2><span class="step">2</span>校验</h2>
-        <p class="hint">
-          结构校验（容器 / item 表 / 分区 / 未覆盖区间）与 PARM CRC 是秒级的；整镜像 MD5 与 RKAF CRC 要扫全文件。
-          下面的预计时间来自本机实测速度，不是固定数字。
-        </p>
-        <div class="controls">
-          <label class="toggle">
-            <input id="chk-full-verify" type="checkbox" checked />
-            完整校验（整镜像 MD5 + RKAF CRC）
-          </label>
-          <button id="btn-verify" type="button" class="primary" disabled>开始校验</button>
-        </div>
-        <p id="verify-hint" class="hint"></p>
-        <div id="verify-progress" class="progress" hidden>
-          <div class="bar"><span id="verify-bar"></span></div>
-          <p id="verify-progress-text" class="progress-text"></p>
-        </div>
-        <ul id="verify-checks" class="checklist"></ul>
-        <p id="verify-summary" class="hint"></p>
-      </section>
+      <!-- 2 · 刷写 -->
+      <section class="panel block" id="block-flash">
+        <h2><span class="step">2</span>刷写</h2>
 
-      <!-- 3 · 设备 -->
-      <section class="panel block" id="block-device">
-        <h2><span class="step">3</span>设备</h2>
-        <p class="hint">
-          页面会列出所有已授权的 <code>0x2207</code> 设备。模式按 <code>bcdUSB</code> bit0 判定（0 = Maskrom，1 = Loader）。
-          没有出现在列表里的设备，点“添加设备”在浏览器弹窗里选一次。
-        </p>
         <div class="controls">
           <button id="btn-authorize" type="button" class="primary">添加设备</button>
           <button id="btn-refresh" type="button">刷新</button>
           <label class="toggle">
             <input id="chk-mock" type="checkbox" />
-            演示模式（mock 设备）
+            演示模式
           </label>
         </div>
         <p id="device-selected" class="hint"></p>
         <div id="devices" class="devices"></div>
 
         <div id="reconnect" class="reconnect" hidden>
-          <h3>设备重连向导</h3>
+          <h3>设备重连</h3>
           <ol id="reconnect-steps"></ol>
           <div class="controls">
             <button id="btn-reconnect-auth" type="button" class="primary">重新授权</button>
             <button id="btn-reconnect-dismiss" type="button">暂时忽略</button>
           </div>
         </div>
-      </section>
 
-      <!-- 4 · 刷写 -->
-      <section class="panel block" id="block-flash">
-        <h2><span class="step">4</span>刷写</h2>
-        <p class="hint">按钮禁用时，下面每条前置条件都会写明缺什么；没有“变灰但不说原因”的状态。</p>
         <ul id="checklist" class="checklist"></ul>
+
         <div class="controls">
           <label class="field">
-            未覆盖的分区尾部
+            未覆盖分区尾部
             <select id="erase-mode">
               <option value="none">保持原内容（none）</option>
               <option value="fill">写 0xFF（fill）</option>
@@ -150,11 +128,12 @@
         </div>
       </section>
 
-      <!-- 5 · 日志 -->
+      <!-- 3 · 日志 -->
       <section class="panel block" id="block-log">
-        <h2><span class="step">5</span>日志</h2>
+        <h2><span class="step">3</span>日志</h2>
         <div class="controls">
           <span id="log-count" class="hint">0 条</span>
+          <span class="spacer"></span>
           <button id="btn-export-log" type="button">导出 NDJSON</button>
           <button id="btn-export-text" type="button">导出文本</button>
           <button id="btn-clear-log" type="button">清空</button>
@@ -166,10 +145,8 @@
       </section>
 
       <details id="advanced" class="panel advanced">
-        <summary>高级 / 诊断（命令、只读信息、传输记录、离线安装）</summary>
-        <p class="hint">
-          这一区是给排障用的：原始传输记录、只读命令、loader 覆盖与 PWA 状态。日常刷写不需要打开它。
-        </p>
+        <summary>高级 / 诊断</summary>
+        <p class="hint">排障用：原始传输记录、只读命令、loader 覆盖与 PWA 状态。日常刷写不需要打开。</p>
         <div class="two-col">
           <div>
             <h3>状态</h3>
@@ -244,8 +221,7 @@
       <p>
         协议来自 Rockchip 的 GPL-2.0
         <a href="https://github.com/rockchip-linux/rkdeveloptool" rel="noreferrer">rkdeveloptool</a>；
-        本仓库以 GPL-2.0 发布，不包含 <code>upgrade_tool</code> 二进制，也不分发任何 loader blob。
-        驱动与 udev 规则见 <code>docs/webusb-drivers.md</code>，离线与 zip 直读见 <code>docs/pwa-offline.md</code>。
+        本仓库以 GPL-2.0 发布，不分发任何 loader blob。驱动与离线说明见 <code>docs/</code>。
       </p>
     </footer>
 

@@ -139,7 +139,7 @@ export function evaluatePreflight(input = {}) {
       id: CHECK_IMAGE,
       label: '镜像已校验（结构 + 校验和）',
       status: 'pending',
-      detail: '还没有校验镜像：在第 2 块点“开始校验”，或重新选择镜像让它自动开始。',
+      detail: '还没有校验镜像：在镜像块点“开始校验”，或重新选择镜像让它自动开始。',
     });
   } else if (verification.status === 'fail' || verification.status === 'failed') {
     items.push({
