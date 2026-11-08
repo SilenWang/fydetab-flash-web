@@ -1,41 +1,55 @@
 # fydetab-flash-web
 
-在浏览器里复刻 Rockchip `upgrade_tool` 的刷机路径：协议与编排用 Go 编译成 WebAssembly，USB 走 WebUSB，
-镜像与设备都不离开本机。
+**English** · [简体中文](README.zh-CN.md)
 
-面向 Fydetab Duo（RK3588）。不需要后端、不上传镜像、不安装额外工具：选本地 `.img` 或官方 `.zip`
-即可校验并刷写，也可以安装成离线 PWA。当前已实现 M0–M4b（只读探针、Go/WASM 核心、离线计划、
-写入状态机、WebUSB 写入与页面门禁、PWA/离线/zip 直读、面向普通用户的单页），真机端到端验证仍由后续阶段负责。
+A browser-based ROM flasher built specifically for the **Fydetab Duo (RK3588)**. It runs on any machine with
+Chrome / Chromium — macOS, Linux, Windows, ARM boxes — so the vendor's `upgrade_tool`, which only ships for
+x86 Linux and Windows, is no longer in the way.
 
-![页面总览：三块等大的操作块（选择系统 / 选择设备 / 开始刷写），日志默认收起](docs/images/web-ui/e1-empty.png)
+No backend, no upload, nothing to install: the rockusb protocol and the write state machine are Go compiled to
+WebAssembly, USB goes through WebUSB, and images never leave your machine.
 
-页面只有一条竖线，从上到下就是一次刷机的顺序；逐步骤截图与说明见 [docs/usage-web.md](docs/usage-web.md)。
+## Screenshots
 
-## 文档
+<table width="100%">
+  <tr>
+    <td width="33%" align="center"><img src="docs/images/web-ui/e1-empty.png" width="283" alt="Idle"><br><sub>Idle — pick a system, pick a device, flash</sub></td>
+    <td width="33%" align="center"><img src="docs/images/web-ui/e2-image-dialog.png" width="283" alt="Version picker"><br><sub>Version picker: brand first, then release</sub></td>
+    <td width="33%" align="center"><img src="docs/images/web-ui/e7-writing.png" width="283" alt="Writing"><br><sub>Writing — the third tile turns brand red</sub></td>
+  </tr>
+  <tr>
+    <td width="33%" align="center"><img src="docs/images/web-ui/e8-done.png" width="283" alt="Done"><br><sub>Done — the device reboots by itself</sub></td>
+    <td width="33%" align="center"><img src="docs/images/web-ui/e9-dark.png" width="283" alt="Dark theme"><br><sub>Dark theme follows the system</sub></td>
+    <td width="33%" align="center"><img src="docs/images/web-ui/e10-mobile.png" width="122" alt="390px layout"><br><sub>390px — one column, no overflow</sub></td>
+  </tr>
+</table>
 
-| 我想…… | 从这里开始 |
-|---|---|
-| 第一次刷机 | [docs/quickstart.md](docs/quickstart.md) |
-| 了解页面怎么用 | [docs/usage-web.md](docs/usage-web.md) |
-| 解决驱动、授权、离线安装问题 | [docs/webusb-drivers.md](docs/webusb-drivers.md)、[docs/pwa-offline.md](docs/pwa-offline.md) |
-| 参与开发（环境、构建、测试） | [docs/development.md](docs/development.md) |
-| 看架构、代码地图与阶段记录 | [docs/architecture.md](docs/architecture.md) |
-| 用 CLI 做离线计划 / mock / 回放 | [docs/cli.md](docs/cli.md) |
-| 查协议、镜像格式与写入细节 | [docs/protocol-notes.md](docs/protocol-notes.md)、[docs/rkfw-rkaf-format.md](docs/rkfw-rkaf-format.md)、[docs/uf-write-path.md](docs/uf-write-path.md) |
-| 确认已知限制与待验证项 | [docs/limitations.md](docs/limitations.md) |
+## Flash a device
 
-完整索引见 [docs/README.md](docs/README.md)。
+1. **Enter flash mode.** Power the tablet off, connect USB, hold **Vol+**, tap **Power**, then release Power
+   and Vol+. In MASKROM the page sends Download Boot by itself — click no read button before that.
+2. **Pick a system.** Click the first tile, choose FydeOS or openFyde and a release, or use *Choose local file*
+   with an `.img` / official `.zip`. Vendor CDNs forbid direct reads (CORS), so downloads open in a new tab —
+   pick the file back up with *Choose local file*.
+3. **Connect the device.** Click the second tile and select the `0x2207` device in the browser prompt.
+4. **Verify.** Parsing, PARM CRC, RKAF CRC and whole-image MD5 run by themselves; one line shows the verdict.
+5. **Flash.** If the image leaves storage uncovered, say what to do with the tail, then click *Start flash*.
+   Progress, speed and ETA sit under the third tile; you can cancel at any point.
+6. **Watch the log.** Collapsed by default, opens on errors, exports NDJSON. Keep it when something fails.
 
-## 参考项目
+Needs Chrome / Edge / Chromium ≥ 89 and a USB-C cable that actually carries data. Linux wants a
+[udev rule](docs/99-rockchip-webusb.rules), Windows wants WinUSB, macOS wants nothing.
 
-- [rockchip-linux/rkdeveloptool](https://github.com/rockchip-linux/rkdeveloptool)（GPL-2.0）：命令码、
-  CBW/CSW 布局、vendor request、RKBOOT 容器、CRC 与 GPT 常量。
-- [TheGammaSqueeze/rk_image_tool](https://github.com/TheGammaSqueeze/rk_image_tool)：parameter 解析、
-  IDB 约定与 GPT 几何。
-- [suyulin/afptool-rs](https://github.com/suyulin/afptool-rs)：RKAF 尾 CRC、32 位长度回绕与 PARM 包装。
-- [WebUSB 规范](https://wicg.github.io/webusb/)：浏览器侧的设备访问模型。
+## Docs
 
-## 许可
+Detailed docs are currently in Chinese: **[docs/README.md](docs/README.md)**.
 
-本仓库以 **GPL-2.0** 发布，见 [LICENSE](LICENSE)。不分发 `upgrade_tool` 二进制，也不分发 Rockchip loader
-blob；loader 默认从用户自己的镜像里切出。
+- First flash, step by step: [docs/quickstart.md](docs/quickstart.md)
+- Page walkthrough — the long version of the six steps above: [docs/usage-web.md](docs/usage-web.md)
+- Drivers, permissions, offline PWA: [docs/webusb-drivers.md](docs/webusb-drivers.md), [docs/pwa-offline.md](docs/pwa-offline.md)
+- Build it yourself: [docs/development.md](docs/development.md)
+
+## License
+
+GPL-2.0, see [LICENSE](LICENSE). No `upgrade_tool` binary and no Rockchip loader blob is distributed here; the
+loader is sliced out of the image you provide.
