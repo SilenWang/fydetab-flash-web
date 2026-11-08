@@ -10,6 +10,8 @@
 // What it deliberately does not do: encryption, multi-disk archives, CRC
 // verification (that is the inner RKFW/RKAF checks' job), and writing zips.
 
+import { t as translate } from './i18n.js';
+
 export const ZIP_METHOD_STORE = 0;
 export const ZIP_METHOD_DEFLATE = 8;
 
@@ -282,7 +284,7 @@ export async function entryDataRange(blob, entry) {
 }
 
 /** describeEntry is the one-line summary the page shows after opening a zip. */
-export function describeEntry(entry) {
-  const kind = entry.dir ? '目录' : methodName(entry.method);
+export function describeEntry(entry, { t = translate } = {}) {
+  const kind = entry.dir ? t('zip-source.describe.dir') : methodName(entry.method);
   return `${entry.name} · ${kind} · ${entry.compressedSize} → ${entry.uncompressedSize} B`;
 }

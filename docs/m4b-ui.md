@@ -127,12 +127,26 @@ RKAF CRC 尾部是 `00000000` 时按既定规则视为“未填写”，只警�
   设备状态、每一步进度都在里面。内存上限 5000 条，超出时文件里会写明丢了多少条；一条都没有时不显示这个按钮。
 - 页面上没有清空按钮：日志是故障现场，刷新页面就会清掉。
 
+## 6 · 语言：zh / en，按浏览器自动匹配
+
+页面的每个字符串都来自 `web/app/locales/{zh,en}.js`，模块自己不留文案（`test/i18n.test.mjs`
+会扫 `web/app/*.js` 与 `index.html` 里的中文字面量，抓到就失败）。
+
+- 匹配顺序：按 `navigator.languages` 的顺序走，第一个 `zh*` 用中文、第一个 `en*` 用英文；
+  两者都没有（比如 `fr-FR`）用英文。区号和书写系统不区分（`zh-Hant-TW` → 中文，`en-GB` → 英文）。
+- `index.html` 写成英文并带 `data-i18n` / `data-i18n-aria-label` / `data-i18n-title`，
+  启动时由 `applyDocument()` 替换 `<html lang>`、标题与这三类属性——模块脚本被挡住时至少是一页完整英文。
+- `?lang=zh` / `?lang=en` 可以强制一种语言。它只是给验收入口用的，页面上没有语言开关。
+- 新增一种语言 = 一个 `locales/<lang>.js` + `SUPPORTED` 加一项 + `sw.js` 的 `PRECACHE` 加一行；
+  key 与 `{placeholder}` 的完整性由测试双向校验。
+
 ## 落地位置
 
 | 关注点 | 文件 |
 |---|---|
 | 页面结构 | `web/app/index.html`、`web/app/styles.css` |
 | 页面状态与流程编排 | `web/app/app.js` |
+| 语言选择与文案查表 | `web/app/i18n.js`、`web/app/locales/{zh,en}.js` |
 | 品牌字形（官方 SVG） | `web/app/brand.js` |
 | 版本清单、CORS 探测、流式下载 | `web/app/images.json`、`web/app/images.js` |
 | 校验策略（阻断 / 警告 / 2 分钟规则） | `web/app/verify.js` |
@@ -151,3 +165,5 @@ RKAF CRC 尾部是 `00000000` 时按既定规则视为“未填写”，只警�
 - 页面不重算整文件 sha256（浏览器没有流式 digest），清单里的 sha256 只作参考。
 - openFyde r144 / r126 发布为 `.img.xz`，页面不读 xz：先解压再选 `.img`。
 - `.zip` 做完整校验会多一次按需解压的成本，取样测速已经包含这一步。
+- 文案只有 zh / en 两份：`manifest.webmanifest` 的 `lang` 固定为 `en`（清单本身不随语言变化），
+  切换语言需要刷新页面（页面上没有语言开关，靠浏览器语言或 `?lang=`）。

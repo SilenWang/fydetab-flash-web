@@ -12,6 +12,8 @@
 //     log and the NDJSON shape the CLI's `uf --log` writes, so a failing write
 //     can be mailed in either form.
 
+import { t as translate } from './i18n.js';
+
 export const LEVELS = ['debug', 'info', 'warn', 'error'];
 
 const LEVEL_RANK = { debug: 0, info: 1, warn: 2, error: 3 };
@@ -26,7 +28,7 @@ function pad(text, width) {
 }
 
 /** createLogStore returns the bounded, exportable log the page renders. */
-export function createLogStore({ limit = 5000, now = () => new Date(), onChange = null } = {}) {
+export function createLogStore({ limit = 5000, now = () => new Date(), onChange = null, t = translate } = {}) {
   const entries = [];
   let dropped = 0;
   let seq = 0;
@@ -105,7 +107,7 @@ export function createLogStore({ limit = 5000, now = () => new Date(), onChange 
       const lines = entries.map(
         (entry) => `${entry.ts}  ${pad(entry.level, 5)}  [${entry.source}] ${entry.text}`,
       );
-      if (dropped > 0) lines.unshift(`# 已丢弃最早的 ${dropped} 条日志（内存上限 ${limit} 条）`);
+      if (dropped > 0) lines.unshift(t('log.dropped', { dropped, limit }));
       return lines.join('\n');
     },
     /**

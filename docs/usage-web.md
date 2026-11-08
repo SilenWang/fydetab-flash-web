@@ -27,6 +27,12 @@
 想在没有硬件的情况下验证代码路径，用 `pixi run sample` + 本地文件 + CLI 的 `--mock`，见
 [cli.md](cli.md) 与 [development.md](development.md)。
 
+## 界面语言
+
+页面有中文与英文两套文案，按浏览器语言自动选：`navigator.languages` 里第一个 `zh*` 用中文、第一个
+`en*` 用英文，两者都没有就用英文。想固定一种语言看效果，在地址后加 `?lang=zh` 或 `?lang=en`
+（页面上没有语言开关；切换后刷新即可）。
+
 ## 离线
 
 装成 PWA 之后页面与 wasm 都来自本地缓存，断网也能打开并完成写入（写入本来就不需要网络）。

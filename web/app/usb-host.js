@@ -2,7 +2,10 @@
 //
 // WebUSB is Window-only and requestDevice() must run inside a user gesture, so
 // the device itself lives here and the worker's Go core drives it through RPC.
-// This module only moves bytes; every protocol decision is in Go.
+// This module only moves bytes; every protocol decision is in Go. Its three
+// error messages are the ones a user has to act on, so they come from i18n.js.
+
+import { t as translate } from './i18n.js';
 
 export const ROCKCHIP_VENDOR_ID = 0x2207;
 
@@ -71,7 +74,7 @@ const CONTROL_SETUP = {
  * physical device is opened, so a reordered device list cannot open the wrong
  * board.
  */
-export function createWebUSBHost(usb = globalThis.navigator?.usb) {
+export function createWebUSBHost(usb = globalThis.navigator?.usb, { t = translate } = {}) {
   const handles = new Map();
   const sessions = new Map();
 
@@ -104,10 +107,10 @@ export function createWebUSBHost(usb = globalThis.navigator?.usb) {
       device = handles.get(handle);
     }
     if (!device) {
-      throw new Error(`设备不在已授权列表里（handle ${handle}）；设备重新枚举后需要再次点“连接设备”`);
+      throw new Error(t('usb-host.unknownHandle', { handle }));
     }
     const iface = findRockusbInterface(device);
-    if (!iface) throw new Error('设备没有 bulk IN + bulk OUT 接口对，不像 rockusb 设备');
+    if (!iface) throw new Error(t('usb-host.noBulk'));
 
     await device.open();
     if (!device.configuration) {
@@ -122,7 +125,7 @@ export function createWebUSBHost(usb = globalThis.navigator?.usb) {
 
   function session(devNo) {
     const entry = sessions.get(devNo);
-    if (!entry) throw new Error(`DevNo=${devNo} 没有打开的会话`);
+    if (!entry) throw new Error(t('usb-host.noSession', { devNo }));
     return entry;
   }
 

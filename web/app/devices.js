@@ -20,6 +20,7 @@ export const ROCKCHIP_VENDOR_ID = 0x2207;
 // preflight.js owns the `ld` mode normalisation (numeric media mode + label);
 // reusing it is what keeps a real Loader board from looking unknown here.
 import { deviceMode } from './preflight.js';
+import { t as translate } from './i18n.js';
 
 /** modeFromBcdUsb follows the protocol's bit-0 convention. */
 export function modeFromBcdUsb(bcdUSB) {
@@ -75,18 +76,18 @@ export function describeUsbDevice(device, index = 0) {
 }
 
 /** listUsbDevices lists every authorised 0x2207 device, never opening one. */
-export async function listUsbDevices(usb = globalThis.navigator?.usb) {
+export async function listUsbDevices(usb = globalThis.navigator?.usb, { t = translate } = {}) {
   if (!usb || typeof usb.getDevices !== 'function') {
-    return { ok: false, devices: [], reason: '这个浏览器没有 WebUSB（navigator.usb）：请用桌面版 Chrome / Edge。' };
+    return { ok: false, devices: [], reason: t('devices.noWebusb') };
   }
   try {
     const granted = await usb.getDevices();
     const devices = (granted ?? [])
       .filter((device) => device?.vendorId === ROCKCHIP_VENDOR_ID)
       .map((device, index) => describeUsbDevice(device, index));
-    return { ok: true, devices, reason: devices.length === 0 ? '还没有已授权的 0x2207 设备。' : '' };
+    return { ok: true, devices, reason: devices.length === 0 ? t('devices.empty') : '' };
   } catch (err) {
-    return { ok: false, devices: [], reason: `读取已授权设备失败：${err?.message ?? err}` };
+    return { ok: false, devices: [], reason: t('devices.listFailed', { error: err?.message ?? err }) };
   }
 }
 
@@ -174,28 +175,35 @@ export function selectedDevice(devices = [], key = null) {
  * and the old authorisation is gone. Matching by serial picks the new instance
  * up again; with several identical boards and no serials it refuses to guess.
  */
-export function matchAfterReenumeration(devices = [], previous = null) {
-  if (!Array.isArray(devices) || devices.length === 0) return { device: null, reason: '设备已离开总线。' };
+export function matchAfterReenumeration(devices = [], previous = null, { t = translate } = {}) {
+  if (!Array.isArray(devices) || devices.length === 0) return { device: null, reason: t('devices.gone') };
   if (!previous) return { device: devices.length === 1 ? devices[0] : null, reason: '' };
   const sameSerial = previous.serialNumber
     ? devices.find((device) => (device.serialNumber ?? '').toLowerCase() === previous.serialNumber.toLowerCase())
     : null;
-  if (sameSerial) return { device: sameSerial, reason: '设备以新的实例重新枚举，已按序列号重新选中。' };
-  if (devices.length === 1) return { device: devices[0], reason: '设备重新枚举后只剩一个候选，已自动选中。' };
-  return { device: null, reason: '设备重新枚举后有多个候选：请重新选择，必要时重新授权。' };
+  if (sameSerial) return { device: sameSerial, reason: t('devices.reenumSerial') };
+  if (devices.length === 1) return { device: devices[0], reason: t('devices.reenumSole') };
+  return { device: null, reason: t('devices.reenumAmbiguous') };
 }
 
 /** deviceSummaryLines renders one row as the two lines the list shows. */
-export function deviceSummaryLines(device, { formatBytes = () => '' } = {}) {
+export function deviceSummaryLines(device, { formatBytes = () => '', t = translate } = {}) {
   if (!device) return [];
   const lines = [
-    `${device.source === 'shell' ? '(仅 core 可见) ' : ''}${hex4(device.vendorId)}:${hex4(device.productId)} · ${device.modeLabel}${
-      device.devNo != null ? ` · DevNo=${device.devNo}` : ''
-    }`,
-    `serial ${device.serialNumber || '（未提供）'} · bcdUSB ${device.bcdUSB == null ? '未知' : `0x${device.bcdUSB.toString(16).padStart(4, '0')}`}${
-      device.needsDownloadBoot ? ' · 需先 Download Boot' : ''
-    }`,
+    t('devices.summary.line1', {
+      source: device.source === 'shell' ? t('devices.summary.shell') : '',
+      vid: hex4(device.vendorId),
+      pid: hex4(device.productId),
+      mode: device.modeLabel,
+      devNo: device.devNo != null ? t('devices.summary.devNo', { devNo: device.devNo }) : '',
+    }),
+    t('devices.summary.line2', {
+      serial: device.serialNumber || t('devices.noSerial'),
+      bcdUSB:
+        device.bcdUSB == null ? t('devices.unknown') : `0x${device.bcdUSB.toString(16).padStart(4, '0')}`,
+      boot: device.needsDownloadBoot ? t('devices.needsBoot') : '',
+    }),
   ];
-  if (!device.flashable) lines.push('模式未知：不能写入');
+  if (!device.flashable) lines.push(t('devices.unflashable'));
   return lines;
 }

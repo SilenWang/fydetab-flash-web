@@ -14,6 +14,12 @@
 //     image's chip before anything is sent;
 //   - the STATE tail (5 GiB partition, ~1 GiB payload) is never erased
 //     implicitly: the operator picks none/fill/erase-lba and confirms it.
+//
+// Every label and detail comes from ./i18n.js. `evaluatePreflight` accepts a
+// `t` in its input so a caller (or a test) can pin a language explicitly; the
+// default is the page's active locale.
+
+import { t as translate } from './i18n.js';
 
 export const ROCKCHIP_VENDOR_ID = 0x2207;
 export const MASKROM_PRODUCT_ID = 0x350b;
@@ -65,16 +71,25 @@ export function deviceMode(device) {
   return 'UNKNOWN';
 }
 
+/** CHECKSUM_IDS are the check ids whose failure means "the file is truncated". */
+const CHECKSUM_IDS = ['md5', 'parm-crc', 'rkaf-crc'];
+
 /**
  * imageFailureHint turns a verification verdict into the one sentence a user can
  * act on: a checksum mismatch means "download it again", anything else means
  * "this is not the file you want".
+ *
+ * The verdict's `failed` ids decide it; older callers that only carried a
+ * summary string still get the checksum-worded hint.
  */
-export function imageFailureHint(verification) {
+export function imageFailureHint(verification, { t = translate } = {}) {
+  const failed = Array.isArray(verification?.failed) ? verification.failed : [];
+  const byId = failed.length > 0 && failed.some((id) => CHECKSUM_IDS.includes(id));
   const summary = verification?.summary ?? '';
-  return /MD5|CRC|校验和/.test(summary)
-    ? '文件不完整（校验和对不上），请重新下载或重新选择镜像。'
-    : '这个文件不是可用的系统镜像，请选择官方下载的镜像。';
+  // The prose fallback matches check names, never localised words: the summary
+  // is copy now, so its wording changes with the language.
+  const byProse = failed.length === 0 && /MD5|CRC|checksum/i.test(summary);
+  return byId || byProse ? t('preflight.image.badChecksum') : t('preflight.image.notImage');
 }
 
 /** isMaskrom reports whether a listed device is a bare maskrom board. */
@@ -96,23 +111,20 @@ export function isLoader(device) {
  * is not that the read would fail (it does, with a STALL) but that the stray
  * CBW is what made the real board's next db attempt unreliable.
  */
-export function readOnlyGate({ device, dbDone }) {
+export function readOnlyGate({ device, dbDone, t = translate }) {
   if (!device) {
-    return { enabled: false, reason: '还没有授权设备：先点“连接设备”，再执行 Download Boot。' };
+    return { enabled: false, reason: t('preflight.readonly.noDevice') };
   }
   if (isLoader(device)) {
-    return { enabled: true, reason: '设备已在 LOADER：只读信息可以安全读取。' };
+    return { enabled: true, reason: t('preflight.readonly.loader') };
   }
   if (isMaskrom(device)) {
     if (dbDone) {
-      return { enabled: false, reason: 'db 已发出但设备还没重新枚举为 LOADER：等它回来后 ld，再读只读信息。' };
+      return { enabled: false, reason: t('preflight.readonly.dbPending') };
     }
-    return {
-      enabled: false,
-      reason: '设备在 maskrom：第一条命令必须是 db。现在发 CBW（读取设备信息）既会被 STALL，也会弄脏这次上电周期。',
-    };
+    return { enabled: false, reason: t('preflight.readonly.maskrom') };
   }
-  return { enabled: false, reason: '设备模式未知：先 ld 看清楚。' };
+  return { enabled: false, reason: t('preflight.readonly.unknown') };
 }
 
 /**
@@ -132,8 +144,10 @@ export function readOnlyGate({ device, dbDone }) {
  *   verification  the verdict from verify.js ({level, status, allowsWrite,
  *                 summary, full}); undefined/null means "not verified yet".
  *                 A quick verdict is allowed to write, but the item says so.
+ *   t            message lookup (defaults to the active locale)
  */
 export function evaluatePreflight(input = {}) {
+  const t = input.t ?? translate;
   const device = currentDevice(input.devices, input.current);
   const facts = input.facts ?? null;
   const loader = input.loader ?? null;
@@ -149,26 +163,30 @@ export function evaluatePreflight(input = {}) {
   if (!verification || verification.status === 'none') {
     items.push({
       id: CHECK_IMAGE,
-      label: '镜像已校验',
+      label: t('preflight.image.label'),
       status: 'pending',
-      detail: '重新选一次镜像就会自动开始。',
+      detail: t('preflight.image.pending'),
     });
   } else if (verification.status === 'fail' || verification.status === 'failed') {
     items.push({
       id: CHECK_IMAGE,
-      label: '镜像已校验',
+      label: t('preflight.image.label'),
       status: 'fail',
       // The raw parser error goes to the log; the page says what to do about it.
-      detail: imageFailureHint(verification),
+      detail: imageFailureHint(verification, { t }),
     });
   } else {
     items.push({
       id: CHECK_IMAGE,
-      label: '镜像已校验',
+      label: t('preflight.image.label'),
       status: 'pass',
       detail: verification.full
-        ? `完整校验通过：${verification.summary || '结构与校验和一致'}`
-        : `快速校验通过：${verification.summary || '结构与 PARM CRC 通过'}——未做完整校验。`,
+        ? t('preflight.image.passFull', {
+            summary: verification.summary || t('preflight.image.passFullDefault'),
+          })
+        : t('preflight.image.passQuick', {
+            summary: verification.summary || t('preflight.image.passQuickDefault'),
+          }),
     });
   }
 
@@ -176,30 +194,33 @@ export function evaluatePreflight(input = {}) {
   if (!device) {
     items.push({
       id: CHECK_MASKROM,
-      label: '设备已连接',
+      label: t('preflight.device.label'),
       status: 'pending',
-      detail: '点「连接设备」，在弹出的窗口里选 Rockchip 设备。',
+      detail: t('preflight.device.pending'),
     });
   } else if (isLoader(device)) {
     items.push({
       id: CHECK_MASKROM,
-      label: '设备已连接',
+      label: t('preflight.device.label'),
       status: 'pass',
-      detail: `设备已进入 LOADER（Pid=0x${(device.productId ?? 0).toString(16)}），可以直接写。`,
+      detail: t('preflight.device.loader', { pid: (device.productId ?? 0).toString(16) }),
     });
   } else if (isMaskrom(device)) {
     items.push({
       id: CHECK_MASKROM,
-      label: '设备已连接',
+      label: t('preflight.device.label'),
       status: 'pass',
-      detail: `maskrom · DevNo=${device.devNo} · Pid=0x${(device.productId ?? 0).toString(16)}。`,
+      detail: t('preflight.device.maskrom', {
+        devNo: device.devNo,
+        pid: (device.productId ?? 0).toString(16),
+      }),
     });
   } else {
     items.push({
       id: CHECK_MASKROM,
-      label: '设备已连接',
+      label: t('preflight.device.label'),
       status: 'fail',
-      detail: '设备模式未知：重新上电后刷新。',
+      detail: t('preflight.device.unknown'),
     });
   }
 
@@ -207,30 +228,40 @@ export function evaluatePreflight(input = {}) {
   if (!loader) {
     items.push({
       id: CHECK_LOADER,
-      label: '引导程序与镜像匹配',
+      label: t('preflight.loader.label'),
       status: 'pending',
-      detail: input.hasImage ? '正在从镜像里取出引导程序。' : '先选一个镜像。',
+      detail: input.hasImage ? t('preflight.loader.pendingLoading') : t('preflight.loader.pendingNoImage'),
     });
   } else if (loader.chipCheck === 'mismatch') {
     items.push({
       id: CHECK_LOADER,
-      label: '引导程序与镜像匹配',
+      label: t('preflight.loader.label'),
       status: 'fail',
-      detail: `引导程序是 ${loader.chip || '?'} 的，镜像是 ${loader.imageChip || '?'} 的：错配的引导程序会在 index 0 被拒收。`,
+      detail: t('preflight.loader.mismatch', {
+        chip: loader.chip || '?',
+        imageChip: loader.imageChip || '?',
+      }),
     });
   } else if (loader.chipCheck === 'ok') {
     items.push({
       id: CHECK_LOADER,
-      label: '引导程序与镜像匹配',
+      label: t('preflight.loader.label'),
       status: 'pass',
-      detail: `${loader.source === 'file' ? '手动指定' : '镜像自带'} · ${loader.chip} · ${formatBytes(loader.length)}`,
+      detail: t('preflight.loader.pass', {
+        source: loader.source === 'file' ? t('preflight.loader.sourceManual') : t('preflight.loader.sourceImage'),
+        chip: loader.chip,
+        size: formatBytes(loader.length),
+      }),
     });
   } else {
     items.push({
       id: CHECK_LOADER,
-      label: '引导程序与镜像匹配',
+      label: t('preflight.loader.label'),
       status: 'warn',
-      detail: `镜像缺少芯片信息，无法比对（${loader.chip || '?'} / ${loader.imageChip || '?'}）：确认这是 Fydetab Duo 的镜像。`,
+      detail: t('preflight.loader.unknown', {
+        chip: loader.chip || '?',
+        imageChip: loader.imageChip || '?',
+      }),
     });
   }
 
@@ -238,32 +269,40 @@ export function evaluatePreflight(input = {}) {
   if (!facts) {
     items.push({
       id: CHECK_PLAN,
-      label: '写入内容已排好',
+      label: t('preflight.plan.label'),
       status: 'pending',
-      detail: '选择镜像后会自动排好。',
+      detail: t('preflight.plan.pending'),
     });
   } else if (!(facts.items > 0)) {
     items.push({
       id: CHECK_PLAN,
-      label: '写入内容已排好',
+      label: t('preflight.plan.label'),
       status: 'fail',
-      detail: '镜像里没有可写的内容：确认这是完整的整机镜像。',
+      detail: t('preflight.plan.empty'),
     });
   } else if (facts.uncoveredTails > 0 && !eraseConfirmed) {
     items.push({
       id: CHECK_PLAN,
-      label: '写入内容已排好',
+      label: t('preflight.plan.label'),
       status: 'fail',
-      detail: `还有 ${formatBytes(facts.uncoveredBytes)} 空间没被覆盖（${facts.uncoveredPartitions ?? facts.uncoveredParts ?? '?'}）：请显式选择处理方式并勾选确认。`,
+      detail: t('preflight.plan.unconfirmed', {
+        bytes: formatBytes(facts.uncoveredBytes),
+        parts: facts.uncoveredPartitions ?? facts.uncoveredParts ?? '?',
+      }),
     });
   } else {
     items.push({
       id: CHECK_PLAN,
-      label: '写入内容已排好',
+      label: t('preflight.plan.label'),
       status: 'pass',
-      detail: `${facts.items} 项 · ${formatBytes(facts.totalBytes)} · 未覆盖 ${formatBytes(
-        facts.uncoveredBytes,
-      )}（${facts.uncoveredPartitions ?? facts.uncoveredParts ?? '无'}）→ ${facts.eraseMode}。`,
+      detail: t('preflight.plan.pass', {
+        count: facts.items,
+        items: facts.items,
+        total: formatBytes(facts.totalBytes),
+        uncovered: formatBytes(facts.uncoveredBytes),
+        parts: facts.uncoveredPartitions ?? facts.uncoveredParts ?? t('preflight.plan.noParts'),
+        mode: facts.eraseMode,
+      }),
     });
   }
 
@@ -272,30 +311,30 @@ export function evaluatePreflight(input = {}) {
   if (isLoader(device)) {
     items.push({
       id: CHECK_FIRST_COMMAND,
-      label: '可直接进入刷写模式',
+      label: t('preflight.first.label'),
       status: 'pass',
-      detail: '设备已经是 LOADER，本次写入不需要再发 Download Boot。',
+      detail: t('preflight.first.loader'),
     });
   } else if (isMaskrom(device) && loaderReady) {
     items.push({
       id: CHECK_FIRST_COMMAND,
-      label: '可直接进入刷写模式',
+      label: t('preflight.first.label'),
       status: 'pass',
-      detail: '写入的第一步就是 Download Boot。',
+      detail: t('preflight.first.maskrom'),
     });
   } else if (isMaskrom(device)) {
     items.push({
       id: CHECK_FIRST_COMMAND,
-      label: '可直接进入刷写模式',
+      label: t('preflight.first.label'),
       status: 'fail',
-      detail: '镜像里没有可用的引导程序，无法进入刷写模式。',
+      detail: t('preflight.first.noLoader'),
     });
   } else {
     items.push({
       id: CHECK_FIRST_COMMAND,
-      label: '可直接进入刷写模式',
+      label: t('preflight.first.label'),
       status: 'pending',
-      detail: '连接设备后会自动确认。',
+      detail: t('preflight.first.pending'),
     });
   }
 
@@ -307,7 +346,7 @@ export function evaluatePreflight(input = {}) {
     items,
     ready,
     blocking: blocking.map((i) => i.id),
-    readOnly: readOnlyGate({ device, dbDone: Boolean(input.dbDone) }),
+    readOnly: readOnlyGate({ device, dbDone: Boolean(input.dbDone), t }),
     canWrite: ready && facts && facts.items > 0 && Boolean(loaderReady) && Boolean(verification?.allowsWrite),
     canDb: Boolean(device) && isMaskrom(device) && Boolean(loaderReady) && !runInProgress,
   };

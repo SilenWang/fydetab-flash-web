@@ -9,10 +9,15 @@
 //     (docs/rkfw-rkaf-format.md, SIL-509): it is reported as a warning, never
 //     as corruption, and the MD5 + PARM CRC checks still have to pass;
 //   - a quick verdict (no full scan) is allowed to write, but every surface
-//     that mentions it has to say "未做完整校验" — no pretending.
+//     that mentions it has to say "no full check" — no pretending.
 //
 // Keeping this pure is what lets the page, its tests and the CLI agree on the
 // wording of a refusal.
+//
+// The wording itself lives in ./i18n.js. `evaluateVerification` and
+// `verificationLines` take an optional `t` so a caller can pin a language.
+
+import { t as translate } from './i18n.js';
 
 export const VERIFY_NONE = 'none';
 export const VERIFY_QUICK = 'quick-ok';
@@ -40,15 +45,15 @@ function itemInBounds(item, fileSize) {
  * input: the JSON ufVerify resolved to (report + checksum results), or null.
  * Returns {level, status, checks, allowsWrite, summary, full, phases}.
  */
-export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } = {}) {
+export function evaluateVerification(result, { formatBytes = (n) => `${n} B`, t = translate } = {}) {
   if (!result) {
     return {
       level: VERIFY_NONE,
       status: 'none',
       full: false,
       allowsWrite: false,
-      checks: [check('image', '镜像已校验', 'pending', '还没有校验：选好镜像后会自动开始。')],
-      summary: '尚未校验。',
+      checks: [check('image', t('verify.check.image'), 'pending', t('verify.check.imagePending'))],
+      summary: t('verify.none'),
       phases: [],
     };
   }
@@ -58,14 +63,15 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
   const checks = [];
 
   if (!result.ok || !report) {
-    checks.push(check('structure', '镜像结构', 'fail', `解析失败：${result.error ?? '未知错误'}`));
+    const error = result.error ?? t('verify.summary.unknownError');
+    checks.push(check('structure', t('verify.structure.label'), 'fail', t('verify.structure.parseFailed', { error })));
     return {
       level: full ? VERIFY_FULL : VERIFY_QUICK,
       status: VERIFY_FAILED,
       full,
       allowsWrite: false,
       checks,
-      summary: `校验失败：${result.error ?? '镜像无法解析'}`,
+      summary: t('verify.failed', { error }),
       phases: result.phases ?? [],
     };
   }
@@ -78,24 +84,20 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
     checks.push(
       check(
         'container',
-        '容器 RKFW + RKAF',
+        t('verify.container.label'),
         'pass',
-        `${container.chip || '?'} · ${container.version || '?'}${
-          container.buildTime ? ` · built ${container.buildTime}` : ''
-        } · loader ${formatBytes(container.loaderLength ?? 0)} · archive ${formatBytes(container.rkafLength ?? 0)}${
-          container.dataHole ? ` · 数据洞 ${formatBytes(container.dataHole)}` : ''
-        }`,
+        t('verify.container.pass', {
+          chip: container.chip || '?',
+          version: container.version || '?',
+          loader: formatBytes(container.loaderLength ?? 0),
+          archive: formatBytes(container.rkafLength ?? 0),
+        }) +
+          (container.buildTime ? t('verify.container.buildSuffix', { time: container.buildTime }) : '') +
+          (container.dataHole ? t('verify.container.holeSuffix', { size: formatBytes(container.dataHole) }) : ''),
       ),
     );
   } else {
-    checks.push(
-      check(
-        'container',
-        '容器 RKFW + RKAF',
-        'warn',
-        '裸 RKAF（没有 RKFW 包装）：镜像里没有 loader，maskrom 下无法 Download Boot；已在 LOADER 的设备仍可写。',
-      ),
-    );
+    checks.push(check('container', t('verify.container.label'), 'warn', t('verify.container.warn')));
   }
 
   // 2. Item table: every payload must fit inside the file.
@@ -103,26 +105,33 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
   const outOfBounds = items.filter((item) => !itemInBounds(item, fileSize));
   const shifted = items.filter((item) => item.shifted).length;
   if (items.length === 0) {
-    checks.push(check('items', 'item 表与数据边界', 'fail', 'item 表为空：这份镜像没有可写的分区。'));
+    checks.push(check('items', t('verify.items.label'), 'fail', t('verify.items.empty')));
   } else if (outOfBounds.length > 0) {
+    const names = outOfBounds
+      .slice(0, 3)
+      .map((item) => item.name)
+      .join(t('verify.listSeparator'));
     checks.push(
       check(
         'items',
-        'item 表与数据边界',
+        t('verify.items.label'),
         'fail',
-        `${outOfBounds.length}/${items.length} 项数据超出文件范围：${outOfBounds
-          .slice(0, 3)
-          .map((item) => item.name)
-          .join('、')}${outOfBounds.length > 3 ? ' …' : ''}`,
+        t('verify.items.outOfBounds', {
+          bad: outOfBounds.length,
+          total: items.length,
+          names,
+          more: outOfBounds.length > 3 ? t('verify.items.more') : '',
+        }),
       ),
     );
   } else {
     checks.push(
       check(
         'items',
-        'item 表与数据边界',
+        t('verify.items.label'),
         'pass',
-        `${items.length} 项全部落在文件内${shifted > 0 ? `（${shifted} 项位于数据洞之后，已按解析出的偏移读取）` : ''}`,
+        t('verify.items.pass', { count: items.length }) +
+          (shifted > 0 ? t('verify.items.shiftedSuffix', { count: shifted }) : ''),
       ),
     );
   }
@@ -132,19 +141,24 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
   const data = report.data ?? null;
   if (data && data.hole > 0 && data.decided === false) {
     checks.push(
-      check('payload', 'payload 偏移可判定', 'fail', `镜像有 ${formatBytes(data.hole)} 数据洞，但没有签名能判定偏移：写入会被拒绝。`),
+      check(
+        'payload',
+        t('verify.payload.label'),
+        'fail',
+        t('verify.payload.undecided', { hole: formatBytes(data.hole) }),
+      ),
     );
   } else if (data && data.failed > 0) {
     checks.push(
       check(
         'payload',
-        'payload 偏移可判定',
+        t('verify.payload.label'),
         'fail',
-        `${data.failed}/${data.checked} 项的分区签名与预期不符：偏移可能读错了，写入会被拒绝。`,
+        t('verify.payload.signature', { failed: data.failed, checked: data.checked }),
       ),
     );
   } else if (data && data.checked > 0) {
-    checks.push(check('payload', 'payload 偏移可判定', 'pass', `${data.checked} 项分区签名与预期一致。`));
+    checks.push(check('payload', t('verify.payload.label'), 'pass', t('verify.payload.pass', { count: data.checked })));
   }
 
   // 4. Parameter table.
@@ -154,15 +168,17 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
     checks.push(
       check(
         'parameter',
-        'parameter 分区表',
+        t('verify.parameter.label'),
         'pass',
-        `${parameter.partitionCount} 个分区${parameter.wrapped ? '（PARM 包装）' : ''} · ${formatBytes(
-          parameter.contentBytes ?? 0,
-        )}`,
+        t('verify.parameter.pass', {
+          count: parameter.partitionCount,
+          wrapped: parameter.wrapped ? t('verify.parameter.wrapped') : '',
+          bytes: formatBytes(parameter.contentBytes ?? 0),
+        }),
       ),
     );
   } else {
-    checks.push(check('parameter', 'parameter 分区表', 'fail', 'parameter 里没有 mtdparts 分区，无法建立写入计划。'));
+    checks.push(check('parameter', t('verify.parameter.label'), 'fail', t('verify.parameter.empty')));
   }
 
   // 5. Uncovered tails are informational here: the explicit erase decision is
@@ -170,19 +186,25 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
   const uncovered = Array.isArray(report.uncovered) ? report.uncovered : [];
   if (uncovered.length > 0) {
     const total = uncovered.reduce((sum, range) => sum + (range.bytes ?? 0), 0);
+    const ranges = uncovered
+      .slice(0, 3)
+      .map((range) => `${range.partition} ${formatBytes(range.bytes)}`)
+      .join(t('verify.listSeparator'));
     checks.push(
       check(
         'uncovered',
-        '未覆盖区间',
+        t('verify.uncovered.label'),
         'pass',
-        `${uncovered.length} 段共 ${formatBytes(total)} 不会被镜像写入：${uncovered
-          .slice(0, 3)
-          .map((range) => `${range.partition} ${formatBytes(range.bytes)}`)
-          .join('、')}${uncovered.length > 3 ? ' …' : ''}（处置在刷写块显式选择）`,
+        t('verify.uncovered.pass', {
+          count: uncovered.length,
+          total: formatBytes(total),
+          ranges,
+          more: uncovered.length > 3 ? t('verify.items.more') : '',
+        }),
       ),
     );
   } else {
-    checks.push(check('uncovered', '未覆盖区间', 'pass', '没有未覆盖区间：镜像填满了它声明的每个分区。'));
+    checks.push(check('uncovered', t('verify.uncovered.label'), 'pass', t('verify.uncovered.none')));
   }
 
   // 6. PARM CRC (cheap, always run).
@@ -191,40 +213,33 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
     checks.push(
       check(
         'parm-crc',
-        'PARM CRC',
+        t('verify.parmCrc.label'),
         crc.ok ? 'pass' : 'fail',
         crc.ok
-          ? `stored 0x${crc.stored.toString(16)} = computed`
-          : `stored 0x${crc.stored.toString(16)} ≠ computed 0x${crc.computed.toString(16)}：parameter 分区被改过。`,
+          ? t('verify.parmCrc.pass', { stored: crc.stored.toString(16) })
+          : t('verify.parmCrc.fail', { stored: crc.stored.toString(16), computed: crc.computed.toString(16) }),
       ),
     );
   } else {
-    checks.push(check('parm-crc', 'PARM CRC', 'warn', 'parameter 没有 CRC 尾（非官方打包或旧格式），这一项无法校验。'));
+    checks.push(check('parm-crc', t('verify.parmCrc.label'), 'warn', t('verify.parmCrc.missing')));
   }
 
   // 7. RKAF CRC (full scan only).
   if (!full) {
-    checks.push(check('rkaf-crc', 'RKAF CRC', 'warn', '未做：快速校验不扫 RKAF 体。'));
+    checks.push(check('rkaf-crc', t('verify.rkafCrc.label'), 'warn', t('verify.rkafCrc.skipped')));
   } else if (result.rkafCrc) {
     const crc = result.rkafCrc;
     if (crc.ok) {
-      checks.push(check('rkaf-crc', 'RKAF CRC', 'pass', `stored 0x${crc.stored.toString(16)} = computed`));
+      checks.push(check('rkaf-crc', t('verify.rkafCrc.label'), 'pass', t('verify.rkafCrc.pass', { stored: crc.stored.toString(16) })));
     } else if (crc.stored === 0) {
-      checks.push(
-        check(
-          'rkaf-crc',
-          'RKAF CRC',
-          'warn',
-          '尾部是 00000000（按既定规则视为“未填写”）：不算损坏，但这一项没有可比对的值；整镜像 MD5 与 PARM CRC 仍然照常校验。',
-        ),
-      );
+      checks.push(check('rkaf-crc', t('verify.rkafCrc.label'), 'warn', t('verify.rkafCrc.zero')));
     } else {
       checks.push(
         check(
           'rkaf-crc',
-          'RKAF CRC',
+          t('verify.rkafCrc.label'),
           'fail',
-          `stored 0x${crc.stored.toString(16)} ≠ computed 0x${crc.computed.toString(16)}：归档体被改过。`,
+          t('verify.rkafCrc.fail', { stored: crc.stored.toString(16), computed: crc.computed.toString(16) }),
         ),
       );
     }
@@ -232,20 +247,23 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
 
   // 8. Whole-image MD5 (full scan only).
   if (!full) {
-    checks.push(check('md5', '整镜像 MD5', 'warn', '未做：快速校验不扫全文件。'));
+    checks.push(check('md5', t('verify.md5.label'), 'warn', t('verify.md5.skipped')));
   } else if (!result.md5) {
-    checks.push(check('md5', '整镜像 MD5', 'warn', '镜像没有 MD5 记录，这一项无法校验。'));
+    checks.push(check('md5', t('verify.md5.label'), 'warn', t('verify.md5.missing')));
   } else if (!result.md5.present) {
-    checks.push(check('md5', '整镜像 MD5', 'warn', '裸 RKAF 没有 MD5 尾，这一项无法校验。'));
+    checks.push(check('md5', t('verify.md5.label'), 'warn', t('verify.md5.bare')));
   } else {
     checks.push(
       check(
         'md5',
-        '整镜像 MD5',
+        t('verify.md5.label'),
         result.md5.ok ? 'pass' : 'fail',
         result.md5.ok
-          ? `${result.md5.computed}（@0x${(result.md5.offset ?? 0).toString(16)}）`
-          : `expected ${result.md5.expected} ≠ computed ${result.md5.computed}`,
+          ? t('verify.md5.pass', {
+              computed: result.md5.computed,
+              offset: (result.md5.offset ?? 0).toString(16),
+            })
+          : t('verify.md5.fail', { expected: result.md5.expected, computed: result.md5.computed }),
       ),
     );
   }
@@ -253,19 +271,27 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
   // 9. Loader identity: maskrom needs the image's own loader for db.
   const loader = result.loader ?? null;
   if (!loader) {
-    checks.push(check('loader', '镜像自带 loader', 'warn', '镜像里没有 RKFW loader：maskrom 下无法 Download Boot。'));
+    checks.push(check('loader', t('verify.loader.label'), 'warn', t('verify.loader.missing')));
   } else if (loader.chipCheck === 'mismatch') {
     checks.push(
-      check('loader', '镜像自带 loader', 'fail', `loader 是 ${loader.chip || '?'} 的，镜像是 ${loader.imageChip || '?'} 的：BootROM 会在 index 0 拒收。`),
+      check(
+        'loader',
+        t('verify.loader.label'),
+        'fail',
+        t('verify.loader.mismatch', { chip: loader.chip || '?', imageChip: loader.imageChip || '?' }),
+      ),
     );
   } else {
     checks.push(
       check(
         'loader',
-        '镜像自带 loader',
+        t('verify.loader.label'),
         'pass',
-        `${loader.chip || '?'} · ${formatBytes(loader.length ?? 0)} · sha256 ${String(loader.sha256 ?? '').slice(0, 12)}…` +
-          `${loader.buildTime ? ` · built ${loader.buildTime}` : ''}`,
+        t('verify.loader.pass', {
+          chip: loader.chip || '?',
+          size: formatBytes(loader.length ?? 0),
+          sha: String(loader.sha256 ?? '').slice(0, 12),
+        }) + (loader.buildTime ? t('verify.container.buildSuffix', { time: loader.buildTime }) : ''),
       ),
     );
   }
@@ -277,12 +303,15 @@ export function evaluateVerification(result, { formatBytes = (n) => `${n} B` } =
   const allowsWrite = failed.length === 0;
 
   const summaryParts = [
-    full ? '完整校验' : '快速校验',
-    `${checks.filter((entry) => entry.status === 'pass').length}/${checks.length} 项通过`,
+    full ? t('verify.summary.full') : t('verify.summary.quick'),
+    t('verify.summary.passed', {
+      passed: checks.filter((entry) => entry.status === 'pass').length,
+      total: checks.length,
+    }),
   ];
-  if (failed.length > 0) summaryParts.push(`${failed.length} 项失败（写入已禁用）`);
-  if (warned.length > 0) summaryParts.push(`${warned.length} 项警告`);
-  if (!full) summaryParts.push('未做完整校验（整镜像 MD5 / RKAF CRC 未运行）');
+  if (failed.length > 0) summaryParts.push(t('verify.summary.failed', { count: failed.length }));
+  if (warned.length > 0) summaryParts.push(t('verify.summary.warned', { count: warned.length }));
+  if (!full) summaryParts.push(t('verify.summary.noFull'));
 
   return {
     level,
@@ -319,12 +348,14 @@ export function shouldDefaultToFull(seconds) {
 }
 
 /** verificationLines renders the verdict as log lines (one per check). */
-export function verificationLines(verification) {
+export function verificationLines(verification, { t = translate } = {}) {
   if (!verification) return [];
   const mark = { pass: '✓', warn: '!', fail: '✗', pending: '…' };
+  // The log's check ids and messages are diagnostics: they stay in the page's
+  // active language, and the id keeps them greppable in an exported log.
   const lines = verification.checks.map(
     (entry) => `${mark[entry.status] ?? '·'} [${entry.id}] ${entry.label} — ${entry.detail}`,
   );
-  lines.push(`校验结论：${verification.summary}`);
+  lines.push(t('verify.lines.conclusion', { summary: verification.summary }));
   return lines;
 }

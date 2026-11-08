@@ -11,6 +11,10 @@
 // Nothing here is a demo path. The worker still knows how to run a mock device
 // (its own tests use it), but the page never asks for it: what you see is the
 // real WebUSB device or nothing at all.
+//
+// Every string that reaches a person is looked up through ./i18n.js; the page
+// picks its language from navigator.languages (zh* → zh, en* → en, anything
+// else → en) once, at startup, before the first render.
 
 import { createWebUSBHost } from './usb-host.js';
 import { CHECK_FIRST_COMMAND, CHECK_IMAGE, CHECK_LOADER, CHECK_PLAN, evaluatePreflight } from './preflight.js';
@@ -23,6 +27,7 @@ import {
   selectedDevice,
 } from './devices.js';
 import { createLogStore } from './logs.js';
+import { applyDocument, hasMessage, resolveLocale, setLocale, t } from './i18n.js';
 import { LOGOS } from './brand.js';
 import {
   estimateFullVerifySeconds,
@@ -131,7 +136,7 @@ const state = {
   verification: {
     status: 'none',
     level: VERIFY_NONE,
-    summary: '尚未校验。',
+    summary: '',
     checks: [],
     allowsWrite: false,
     full: false,
@@ -164,24 +169,16 @@ let verifyToken = 0;
 
 const usbHost = createWebUSBHost(globalThis.navigator?.usb);
 
-const PHASE_LABELS = {
-  structure: '结构',
-  parameter: 'PARM CRC',
-  sample: '测速',
-  'rkaf-crc': 'RKAF CRC',
-  md5: '镜像 MD5',
-  ul: 'Download Boot',
-  db: 'Download Boot',
-  gpt: 'GPT / IDB',
-  wl: '写入',
-  rd: '回读',
-  ef: '擦除',
-  reset: '重启',
+/** phaseLabel translates one phase id; an unknown id is shown as it came. */
+const phaseLabel = (phase) => {
+  if (!phase) return t('phase.write');
+  const key = `phase.${phase}`;
+  return hasMessage(key) ? t(key) : phase;
 };
 
-// A consumer does not care what the BootROM calls the mode; they care whether
-// the board is ready to take the image.
-const MODE_TEXT = { LOADER: '已就绪', MASKROM: '待刷写', UNKNOWN: '未知' };
+/** modeText translates a device mode; a consumer does not care what the
+ *  BootROM calls it, only whether the board is ready to take the image. */
+const modeText = (mode) => t(`mode.${String(mode ?? 'unknown').toLowerCase()}`);
 
 const BRAND_ORDER = ['fydeos', 'openfyde'];
 const BRAND_NAME = { fydeos: 'FydeOS', openfyde: 'openFyde' };
@@ -223,7 +220,7 @@ function appendLogLine(entry) {
 function setLogOpen(open) {
   ui.logBody.hidden = !open;
   ui.toggleLog.setAttribute('aria-expanded', String(open));
-  ui.toggleLog.setAttribute('aria-label', open ? '收起日志' : '展开日志');
+  ui.toggleLog.setAttribute('aria-label', open ? t('log.collapse') : t('log.expand'));
   renderLogCount();
 }
 
@@ -232,9 +229,9 @@ function renderLogCount() {
   // Collapsed: only problems are worth a glance. The raw count is for people
   // who opened the log, not decoration next to the word "日志".
   const parts = [];
-  if (counts.warn) parts.push(`${counts.warn} 警告`);
-  if (counts.error) parts.push(`${counts.error} 错误`);
-  if (!ui.logBody.hidden && log.size > 0) parts.unshift(`${log.size} 条`);
+  if (counts.warn) parts.push(t('log.warnings', { count: counts.warn }));
+  if (counts.error) parts.push(t('log.errors', { count: counts.error }));
+  if (!ui.logBody.hidden && log.size > 0) parts.unshift(t('log.entries', { count: log.size }));
   ui.logCount.textContent = parts.join(' · ');
   ui.logEmpty.hidden = log.size > 0;
   // Export belongs to reading the log: collapsed or empty, there is nothing to
@@ -285,7 +282,7 @@ function exportLog() {
       : null,
   });
   downloadBlob(`fydetab-flash-${stamp()}.ndjson`, text, 'application/x-ndjson');
-  log.info('log', `已导出日志（${log.size} 条）`);
+  log.info('log', t('log.exported', { count: log.size }));
 }
 
 // ---------------------------------------------------------------------------
@@ -298,7 +295,7 @@ function startWorker() {
   state.ready = false;
   worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
   worker.onmessage = onWorkerMessage;
-  worker.onerror = (event) => fatal(`worker 错误：${event.message}`);
+  worker.onerror = (event) => fatal(t('app.workerError', { message: event.message }));
 }
 
 function onWorkerMessage(event) {
@@ -307,7 +304,7 @@ function onWorkerMessage(event) {
     case 'ready':
       state.ready = true;
       state.coreVersion = msg.version;
-      log.info('core', `内核 ${msg.version} 就绪`);
+      log.info('core', t('core.ready', { version: msg.version }));
       updateButtons();
       break;
     case 'result':
@@ -344,7 +341,13 @@ function onWorkerMessage(event) {
       renderZip(msg);
       break;
     case 'zip-stats':
-      log.debug('image', `压缩包读取 ${formatBytes(msg.stats?.decodedBytes ?? 0)}（${msg.stats?.reads ?? 0} 次）`);
+      log.debug(
+        'image',
+        t('image.zipStats', {
+          size: formatBytes(msg.stats?.decodedBytes ?? 0),
+          reads: msg.stats?.reads ?? 0,
+        }),
+      );
       break;
     case 'host':
       handleHostCall(msg);
@@ -362,7 +365,12 @@ function onWorkerMessage(event) {
       }
       if (state.verifying) {
         state.verifying = false;
-        state.verification = { ...state.verification, status: 'failed', allowsWrite: false, summary: `校验失败：${msg.error}` };
+        state.verification = {
+          ...state.verification,
+          status: 'failed',
+          allowsWrite: false,
+          summary: t('verify.failed', { error: msg.error }),
+        };
       }
       break;
     }
@@ -373,7 +381,7 @@ function onWorkerMessage(event) {
       log.debug('worker', msg.message);
       break;
     default:
-      log.debug('worker', `忽略消息 ${msg.type}`);
+      log.debug('worker', t('worker.ignored', { type: msg.type }));
   }
 }
 
@@ -399,18 +407,19 @@ async function handleHostCall(msg) {
 }
 
 function fatal(message) {
-  setBanner(`页面无法启动：${message}`, 'error');
-  log.error('core', `页面无法启动：${message}`);
+  const text = t('app.bootFailed', { message });
+  setBanner(text, 'error');
+  log.error('core', text);
 }
 
 /** request posts one worker message and resolves when its reply arrives. */
 function request(message, { timeoutMs = 600000 } = {}) {
-  if (!worker) return Promise.reject(new Error('worker is not running'));
+  if (!worker) return Promise.reject(new Error(t('app.workerStopped')));
   const id = ++rpcId;
   const promise = new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
     setTimeout(() => {
-      if (pending.delete(id)) reject(new Error(`${message.type}: 超时（内核没有响应）`));
+      if (pending.delete(id)) reject(new Error(t('app.timeout', { type: message.type })));
     }, timeoutMs);
   });
   worker.postMessage({ ...message, id });
@@ -418,12 +427,12 @@ function request(message, { timeoutMs = 600000 } = {}) {
 }
 
 function execCommand(line, { loader, loaderName } = {}) {
-  if (!worker) return Promise.reject(new Error('worker is not running'));
+  if (!worker) return Promise.reject(new Error(t('app.workerStopped')));
   const id = ++rpcId;
   const promise = new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
     setTimeout(() => {
-      if (pending.delete(id)) reject(new Error(`${line}: 超时（内核没有响应）`));
+      if (pending.delete(id)) reject(new Error(t('app.lineTimeout', { line })));
     }, 120000);
   });
   const transfer = [];
@@ -438,7 +447,7 @@ function execCommand(line, { loader, loaderName } = {}) {
 
 function runLine(line, options) {
   if (!state.ready) {
-    reportError('内核还没加载完，请稍候。');
+    reportError(t('app.coreNotReady'));
     return Promise.resolve(null);
   }
   setBusy(true);
@@ -455,20 +464,24 @@ function runLine(line, options) {
 // ---------------------------------------------------------------------------
 
 const sourceLabel = (source) =>
-  source === 'download' ? '官方下载' : source === 'local' ? '本地文件' : '未知';
+  t(source === 'download' ? 'source.download' : source === 'local' ? 'source.local' : 'source.unknown');
 
 async function loadCatalogIntoUI() {
   const catalog = await loadCatalog();
   if (!catalog.ok) {
-    ui.choices.innerHTML = '<p class="muted">版本列表读取失败。可以先选本地文件。</p>';
+    ui.choices.innerHTML = `<p class="muted">${t('image.catalogFailed')}</p>`;
     log.warn('image', catalog.error);
     return;
   }
   state.catalog = catalog;
   renderChoices();
   const versions = catalog.entries.filter((entry) => BRAND_NAME[entry.brand]).length;
-  log.info('image', `版本列表：${versions} 个版本${catalog.updated ? `（更新于 ${catalog.updated}）` : ''}`);
-  if (catalog.dropped.length > 0) log.warn('image', `列表里有 ${catalog.dropped.length} 条无效记录，已忽略`);
+  log.info(
+    'image',
+    t('image.catalogLog', { count: versions }) +
+      (catalog.updated ? t('image.catalogUpdated', { date: catalog.updated }) : ''),
+  );
+  if (catalog.dropped.length > 0) log.warn('image', t('image.catalogDropped', { count: catalog.dropped.length }));
 }
 
 /** brandGroups returns the catalogue split by brand, newest first. */
@@ -485,7 +498,7 @@ function brandGroups() {
 function renderChoices() {
   const groups = brandGroups();
   if (groups.length === 0) {
-    ui.choices.innerHTML = '<p class="muted">还没有可下载的官方版本。请选择本地文件。</p>';
+    ui.choices.innerHTML = `<p class="muted">${t('image.noVersions')}</p>`;
     ui.versionList.replaceChildren();
     return;
   }
@@ -506,7 +519,7 @@ function renderChoices() {
       sub.textContent = entries[0].version;
 
       button.append(logo, sub);
-      button.setAttribute('aria-label', `${BRAND_NAME[brand]}，最新 ${entries[0].version}`);
+      button.setAttribute('aria-label', t('image.brandAria', { brand: BRAND_NAME[brand], version: entries[0].version }));
       button.addEventListener('click', () => selectBrand(brand));
       return button;
     }),
@@ -517,7 +530,7 @@ function renderChoices() {
 /** selectBrand shows that brand's versions below the two brand tiles. */
 function selectBrand(brand) {
   state.pickedBrand = state.pickedBrand === brand ? null : brand;
-  if (state.pickedBrand) log.info('image', `查看 ${BRAND_NAME[brand]} 版本`);
+  if (state.pickedBrand) log.info('image', t('image.viewBrand', { brand: BRAND_NAME[brand] }));
   renderChoices();
 }
 
@@ -542,7 +555,7 @@ function renderVersions() {
       name.textContent = entry.label;
       const meta = document.createElement('span');
       meta.className = 'version-meta';
-      meta.textContent = [entry.size ? formatBytes(entry.size) : null, entry.released, entry.notes ? '需先解压' : null]
+      meta.textContent = [entry.size ? formatBytes(entry.size) : null, entry.released, entry.notes ? t('image.needsUnzip') : null]
         .filter(Boolean)
         .join(' · ');
       body.append(name, meta);
@@ -551,7 +564,7 @@ function renderVersions() {
       if (index === 0) {
         const tag = document.createElement('span');
         tag.className = 'version-tag';
-        tag.textContent = '最新';
+        tag.textContent = t('image.latest');
         button.appendChild(tag);
       }
 
@@ -592,22 +605,25 @@ async function downloadCatalogEntry(entry) {
   ui.downloadProgress.hidden = false;
   ui.downloadFallback.hidden = true;
   ui.downloadBar.style.width = '0%';
-  ui.downloadText.textContent = `准备下载 ${entry.label}…`;
+  ui.downloadText.textContent = t('download.preparing', { label: entry.label });
   ui.downloadCancel.disabled = false;
   renderChoices();
   updateButtons();
-  log.info('download', `开始下载：${entry.label} ← ${entry.url}`);
+  log.info('download', t('download.started', { label: entry.label, url: entry.url }));
 
   const result = await downloadEntry(entry, {
     signal: state.download.controller.signal,
-    onProbe: (probe) => log.info('download', `探测：${probe.reason}`),
+    onProbe: (probe) => log.info('download', t('download.probed', { reason: probe.reason })),
     onProgress: (snapshot) => {
       if (!snapshot) return;
       const percent = snapshot.percent ?? 0;
       ui.downloadBar.style.width = `${percent}%`;
-      ui.downloadText.textContent = `${formatBytes(snapshot.received)} / ${
-        snapshot.total ? formatBytes(snapshot.total) : '未知大小'
-      } · ${formatSpeed(snapshot.speed)} · 剩余 ${formatDuration(snapshot.etaSeconds)}`;
+      ui.downloadText.textContent = t('download.progress', {
+        received: formatBytes(snapshot.received),
+        total: snapshot.total ? formatBytes(snapshot.total) : t('download.unknownSize'),
+        speed: formatSpeed(snapshot.speed),
+        eta: t('time.remaining', { time: formatDuration(snapshot.etaSeconds) }),
+      });
     },
   });
 
@@ -621,7 +637,11 @@ async function downloadCatalogEntry(entry) {
     ui.downloadProgress.hidden = true;
     log.info(
       'download',
-      `下载完成：${result.name} · ${formatBytes(result.received)} · 用时 ${formatDuration(result.elapsedMs / 1000)}`,
+      t('download.done', {
+        name: result.name,
+        size: formatBytes(result.received),
+        time: formatDuration(result.elapsedMs / 1000),
+      }),
     );
     await chooseImage(result.file, { source: 'download', catalog: entry });
     return;
@@ -634,11 +654,11 @@ async function downloadCatalogEntry(entry) {
       ui.downloadFallback.hidden = false;
     }
     log.warn('download', result.reason);
-    setBanner('已在新标签页下载；下好后在「选择系统」里选本地文件。', 'warn');
+    setBanner(t('download.tabFallback'), 'warn');
     return;
   }
   if (result.kind === 'cancelled') {
-    log.info('download', '已取消下载');
+    log.info('download', t('download.cancelled'));
     ui.downloadProgress.hidden = true;
     return;
   }
@@ -649,7 +669,7 @@ async function downloadCatalogEntry(entry) {
 
 function cancelDownload() {
   if (!state.download.running || !state.download.controller) return;
-  log.warn('download', '取消下载…');
+  log.warn('download', t('download.cancelRequested'));
   state.download.controller.abort();
 }
 
@@ -659,7 +679,7 @@ async function pickLocalImage() {
       const [handle] = await globalThis.showOpenFilePicker({
         types: [
           {
-            description: 'Rockchip 镜像',
+            description: t('download.pickerDescription'),
             accept: { 'application/octet-stream': ['.img', '.bin'], 'application/zip': ['.zip'] },
           },
         ],
@@ -670,7 +690,7 @@ async function pickLocalImage() {
       return;
     } catch (err) {
       if (err?.name === 'AbortError') return;
-      log.warn('image', `文件选择器不可用（${err?.message ?? err}），改用普通文件输入框`);
+      log.warn('image', t('download.pickerUnavailable', { error: err?.message ?? err }));
     }
   }
   ui.fileImage.click();
@@ -706,9 +726,16 @@ async function chooseImage(file, meta = {}) {
   clearWriteFailure();
   setBanner('');
   renderImageSummary();
-  log.info('image', `选择镜像：${file.name}（${formatBytes(file.size)}，来源：${sourceLabel(state.imageMeta.source)}）`);
+  log.info(
+    'image',
+    t('image.selected', {
+      name: file.name,
+      size: formatBytes(file.size),
+      source: sourceLabel(state.imageMeta.source),
+    }),
+  );
   if (state.imageMeta.catalogSize && file.size && state.imageMeta.catalogSize !== file.size) {
-    log.warn('image', `文件大小与官方版本不一致（官方 ${formatBytes(state.imageMeta.catalogSize)}）：确认选的是同一个镜像`);
+    log.warn('image', t('image.sizeMismatch', { official: formatBytes(state.imageMeta.catalogSize) }));
   }
   resetEraseChoice();
   await planImage();
@@ -718,7 +745,7 @@ async function chooseImage(file, meta = {}) {
 function renderImageSummary() {
   const hasImage = Boolean(state.image);
   if (!hasImage) {
-    ui.imageTitle.textContent = '选择系统';
+    ui.imageTitle.textContent = t('tile.image');
     ui.imageSub.textContent = 'FydeOS · openFyde';
     ui.eraseRow.hidden = true;
     return;
@@ -728,23 +755,26 @@ function renderImageSummary() {
   // page knows about the file belongs in the log.
   const verdict =
     state.verification.status === 'running'
-      ? '校验中…'
+      ? t('image.verdict.running')
       : state.verification.status === 'failed' || state.plan?.ok === false
-        ? '校验未通过'
+        ? t('image.verdict.failed')
         : state.verification.status === 'none'
-          ? '准备中…'
+          ? t('image.verdict.preparing')
           : state.verification.full
-            ? '已校验'
-            : '快速校验通过';
-  ui.imageSub.textContent = `${formatBytes(state.image?.size ?? state.imageSize ?? 0)} · ${verdict}`;
-  ui.imageButton.dataset.tone = /未通过/.test(verdict) ? 'error' : '';
+            ? t('image.verdict.full')
+            : t('image.verdict.quick');
+  ui.imageSub.textContent = t('image.summary', {
+    size: formatBytes(state.image?.size ?? state.imageSize ?? 0),
+    verdict,
+  });
+  ui.imageButton.dataset.tone = state.verification.status === 'failed' || state.plan?.ok === false ? 'error' : '';
   renderEraseChoice();
 }
 
 function renderZip(msg) {
   if (!msg) return;
   const entry = msg.entry ?? {};
-  log.info('image', `压缩包：使用 ${entry.name ?? '?'}（${formatBytes(entry.uncompressedSize ?? 0)}）`);
+  log.info('image', t('image.zipEntry', { name: entry.name ?? '?', size: formatBytes(entry.uncompressedSize ?? 0) }));
 }
 
 /** resetEraseChoice makes the tail decision an explicit act per image. */
@@ -774,7 +804,7 @@ function imagePayload(extra = {}) {
 
 async function planImage() {
   if (!state.ready) {
-    log.warn('plan', '内核还没加载完：稍后再排写入内容');
+    log.warn('plan', t('plan.coreNotReady'));
     return;
   }
   const payload = imagePayload();
@@ -785,7 +815,7 @@ async function planImage() {
     renderPlan(result);
     if (result.ok) await fetchImageLoader();
   } catch (err) {
-    reportError(`读取镜像失败：${err.message}`);
+    reportError(t('plan.readFailed', { error: err.message }));
   } finally {
     setBusy(false);
   }
@@ -801,10 +831,10 @@ async function fetchImageLoader() {
       state.loaderBytes = reply.bytes;
       state.loaderSource = 'image';
       state.loaderName = reply.payload?.name ?? 'image loader';
-      log.info('loader', `镜像自带引导程序：${formatBytes(reply.bytes.byteLength)}`);
+      log.info('loader', t('loader.fromImage', { size: formatBytes(reply.bytes.byteLength) }));
     }
   } catch (err) {
-    log.warn('loader', `读取引导程序失败：${err.message}`);
+    log.warn('loader', t('loader.readFailed', { error: err.message }));
   }
   updateButtons();
 }
@@ -814,7 +844,7 @@ function renderPlan(result) {
   state.plan = result;
   renderImageSummary();
   if (!result.ok) {
-    log.error('plan', `镜像无法写入：${result.error}`);
+    log.error('plan', t('plan.cannotWrite', { error: result.error }));
     renderChecklist();
     updateButtons();
     return;
@@ -822,12 +852,15 @@ function renderPlan(result) {
   const facts = result.facts ?? {};
   log.info(
     'plan',
-    `写入内容：${facts.items ?? 0} 项 · ${formatBytes(facts.totalBytes ?? 0)} · 未覆盖 ${formatBytes(
-      facts.uncoveredBytes ?? 0,
-    )}（${facts.uncoveredPartitions || '无'}）`,
+    t('plan.facts', {
+      items: facts.items ?? 0,
+      total: formatBytes(facts.totalBytes ?? 0),
+      uncovered: formatBytes(facts.uncoveredBytes ?? 0),
+      parts: facts.uncoveredPartitions || t('plan.noParts'),
+    }),
   );
   if (result.loader?.chipCheck === 'mismatch') {
-    log.error('plan', '镜像里的引导程序与设备芯片不匹配：写入会被拒绝');
+    log.error('plan', t('plan.loaderMismatch'));
   }
   state.dbDone = false;
   renderChecklist();
@@ -844,7 +877,7 @@ function resetVerification() {
   state.verification = {
     status: 'none',
     level: VERIFY_NONE,
-    summary: '尚未校验。',
+    summary: t('verify.none'),
     checks: [],
     allowsWrite: false,
     full: false,
@@ -861,7 +894,7 @@ async function startVerification({ full = null, reason = '' } = {}) {
   const payload = imagePayload();
   if (!payload) return;
   if (!state.ready) {
-    log.warn('verify', '内核还没加载完：稍后再校验');
+    log.warn('verify', t('verify.coreNotReady'));
     return;
   }
   if (state.verifying || state.ufRunning) return;
@@ -871,12 +904,12 @@ async function startVerification({ full = null, reason = '' } = {}) {
   state.verifyPhase = null;
   ui.verifyProgress.hidden = false;
   ui.verifyBar.style.width = '0%';
-  ui.verifyProgressText.textContent = '开始校验…';
-  state.verification = { ...state.verification, status: 'running', summary: '校验中…', allowsWrite: false };
+  ui.verifyProgressText.textContent = t('verify.started');
+  state.verification = { ...state.verification, status: 'running', summary: t('verify.running'), allowsWrite: false };
   renderImageSummary();
   updateButtons();
   const started = performance.now();
-  log.info('verify', `开始校验${reason ? `（${reason}）` : ''}`);
+  log.info('verify', reason ? t('verify.startLogReason', { reason }) : t('verify.startLog'));
 
   try {
     // 1. Quick verdict + a throughput sample: cheap, and it tells us whether a
@@ -887,7 +920,10 @@ async function startVerification({ full = null, reason = '' } = {}) {
     const estimate = estimateFullVerifySeconds(quick);
     const preferred = full ?? shouldDefaultToFull(estimate);
     if (Number.isFinite(estimate)) {
-      log.info('verify', `测速 ${(quick.sample?.mibPerSec ?? 0).toFixed(0)} MiB/s，完整校验预计 ${formatDuration(estimate)}`);
+      log.info(
+        'verify',
+        t('verify.speed', { speed: (quick.sample?.mibPerSec ?? 0).toFixed(0), estimate: formatDuration(estimate) }),
+      );
     }
 
     if (!preferred) {
@@ -897,7 +933,7 @@ async function startVerification({ full = null, reason = '' } = {}) {
         quick,
       });
       if (Number.isFinite(estimate) && estimate > VERIFY_BUDGET_SECONDS) {
-        log.warn('verify', `完整校验预计 ${formatDuration(estimate)}，这次只做了快速校验`);
+        log.warn('verify', t('verify.quickOnly', { estimate: formatDuration(estimate) }));
       }
       return;
     }
@@ -913,12 +949,12 @@ async function startVerification({ full = null, reason = '' } = {}) {
     });
   } catch (err) {
     if (token !== verifyToken) return;
-    log.error('verify', `校验失败：${err.message}`);
+    log.error('verify', t('verify.failed', { error: err.message }));
     state.verification = {
       ...state.verification,
       status: 'failed',
       allowsWrite: false,
-      summary: `校验失败：${err.message}`,
+      summary: t('verify.failed', { error: err.message }),
     };
     // No banner: the red line under the file name and the checklist row
     // already say it, and the parser's own words are in the log.
@@ -939,9 +975,9 @@ function applyVerification(verdict, extra = {}) {
   };
   for (const line of verificationLines(verdict)) log.add(verdict.status === 'failed' ? 'error' : 'info', 'verify', line);
   const timing = (verdict.phases ?? [])
-    .map((phase) => `${PHASE_LABELS[phase.phase] ?? phase.phase} ${(phase.ms / 1000).toFixed(1)}s`)
+    .map((phase) => `${phaseLabel(phase.phase) || phase.phase} ${(phase.ms / 1000).toFixed(1)}s`)
     .join(' · ');
-  if (timing) log.info('verify', `耗时：${timing}`);
+  if (timing) log.info('verify', t('verify.timing', { timing }));
   setBanner('');
   renderImageSummary();
   renderChecklist();
@@ -961,10 +997,12 @@ function renderVerifyProgress(payload) {
   const remaining = speed > 0 && total > 0 ? Math.max(0, total - state.verifyPhase.done) / speed : null;
   const percent = total > 0 ? Math.min(100, payload.percent ?? 0) : 0;
   ui.verifyBar.style.width = `${percent}%`;
-  const pieces = [PHASE_LABELS[phase] ?? phase];
-  if (total > 0) pieces.push(`${formatBytes(state.verifyPhase.done)} / ${formatBytes(total)}`);
+  const pieces = [phaseLabel(phase)];
+  if (total > 0) {
+    pieces.push(t('verify.ratio', { done: formatBytes(state.verifyPhase.done), total: formatBytes(total) }));
+  }
   if (speed > 0) pieces.push(formatSpeed(speed));
-  if (remaining !== null) pieces.push(`剩余 ${formatDuration(remaining)}`);
+  if (remaining !== null) pieces.push(t('time.remaining', { time: formatDuration(remaining) }));
   ui.verifyProgressText.textContent = pieces.join(' · ');
 }
 
@@ -1010,12 +1048,12 @@ function renderDevices() {
       body.className = 'device-body';
       const title = document.createElement('span');
       title.className = 'device-title';
-      title.textContent = row.productName || 'Rockchip 设备';
+      title.textContent = row.productName || t('device.rockchip');
       const meta = document.createElement('span');
       meta.className = 'device-meta';
       // Mode plus, when two boards are plugged in, the only thing that tells
       // them apart.
-      const parts = [MODE_TEXT[row.mode] ?? row.modeLabel];
+      const parts = [modeText(row.mode)];
       if (rows.length > 1 && row.serialNumber) parts.push(row.serialNumber);
       meta.textContent = parts.join(' · ');
       body.append(title, meta);
@@ -1038,13 +1076,13 @@ function renderDevices() {
   // browser can already act on it.
   if (current) {
     ui.deviceTitle.textContent = current.productName || 'Fydetab Duo';
-    ui.deviceSub.textContent = MODE_TEXT[current.mode] ?? current.modeLabel;
+    ui.deviceSub.textContent = modeText(current.mode);
   } else if (rows.length > 1) {
-    ui.deviceTitle.textContent = `${rows.length} 台设备`;
-    ui.deviceSub.textContent = '选一台';
+    ui.deviceTitle.textContent = t('device.count', { count: rows.length });
+    ui.deviceSub.textContent = t('device.pickOne');
   } else {
-    ui.deviceTitle.textContent = '选择设备';
-    ui.deviceSub.textContent = 'USB 连接';
+    ui.deviceTitle.textContent = t('tile.device');
+    ui.deviceSub.textContent = t('tile.deviceSub');
   }
 
   renderChecklist();
@@ -1054,7 +1092,10 @@ function renderDevices() {
 async function selectDevice(row) {
   state.selectedKey = row.key;
   state.lastSelectedDevice = row;
-  log.info('device', `选中 ${row.modeLabel}${row.serialNumber ? ` · ${row.serialNumber}` : ''}`);
+  log.info(
+    'device',
+    t('device.selected', { mode: row.modeLabel, serial: row.serialNumber ? ` · ${row.serialNumber}` : '' }),
+  );
   renderDevices();
   closeDialog(ui.deviceDialog);
   if (row.devNo != null && !state.ufRunning) await runLine(`cd ${row.devNo}`);
@@ -1062,21 +1103,21 @@ async function selectDevice(row) {
 
 async function authorize() {
   if (!globalThis.navigator?.usb) {
-    setBanner('这个浏览器没有 WebUSB，请用桌面版 Chrome / Edge。', 'error');
+    setBanner(t('device.noWebusb'), 'error');
     return;
   }
   try {
     const device = await navigator.usb.requestDevice({ filters: [{ vendorId: ROCKCHIP_VENDOR_ID }] });
-    log.info('device', `已授权 ${device.productName || 'Rockchip 设备'}`);
+    log.info('device', t('device.authorized', { name: device.productName || t('device.rockchip') }));
     await refreshDeviceList();
     await runLine('ld');
   } catch (err) {
     if (err.name === 'NotFoundError') {
-      log.warn('device', '授权弹窗被取消');
+      log.warn('device', t('device.authCancelled'));
       return;
     }
-    log.error('device', `授权失败：${err.message}`);
-    setBanner(`连接失败：${err.message}`, 'error');
+    log.error('device', t('device.authFailed', { error: err.message }));
+    setBanner(t('device.connectFailed', { error: err.message }), 'error');
   }
 }
 
@@ -1087,7 +1128,7 @@ function markReconnect(cause) {
   state.reconnect.since = new Date().toISOString();
   if (!wasNeeded) {
     state.reconnect.attempts += 1;
-    log.warn('device', `需要重连（${cause}）`);
+    log.warn('device', t('device.reconnectNeeded', { cause }));
   }
   renderReconnect();
 }
@@ -1096,7 +1137,7 @@ function clearReconnect(reason) {
   if (!state.reconnect.needed) return;
   state.reconnect.needed = false;
   state.reconnect.cause = '';
-  log.info('device', `重连提示已清除（${reason}）`);
+  log.info('device', t('device.reconnectCleared', { reason }));
   renderReconnect();
 }
 
@@ -1109,14 +1150,14 @@ function renderReconnect() {
   }
   const cause =
     r.cause === 'db'
-      ? '设备正在切换模式，浏览器会暂时断开连接。'
+      ? t('reconnect.cause.db')
       : r.cause === 'unplug'
-        ? '设备已经断开：拔线、重启或断电都会这样。'
+        ? t('reconnect.cause.unplug')
         : r.cause === 'error'
-          ? '写入中止，设备状态未知。'
-          : '设备不再响应。';
-  const steps = [cause, '确认数据线和供电，然后重新连接。', '重新连接后页面会自动刷新设备列表。'];
-  if (r.attempts >= 3) steps.push('连续失败时换一根数据线或换一个 USB 口，不要经过 hub。');
+          ? t('reconnect.cause.error')
+          : t('reconnect.cause.unknown');
+  const steps = [cause, t('reconnect.step.check'), t('reconnect.step.auto')];
+  if (r.attempts >= 3) steps.push(t('reconnect.step.cable'));
   ui.reconnectSteps.replaceChildren(
     ...steps.map((text, index) => {
       const li = document.createElement('li');
@@ -1189,7 +1230,7 @@ function renderEraseChoice() {
   state.eraseChoiceNeeded = Boolean(facts?.uncoveredTails > 0) && !state.eraseConfirmed && hasDevice;
   ui.eraseRow.hidden = !state.eraseChoiceNeeded;
   if (!state.eraseChoiceNeeded) return;
-  ui.eraseTitle.textContent = `镜像没覆盖 ${formatBytes(facts.uncoveredBytes ?? 0)} 空间，这部分怎么处理？`;
+  ui.eraseTitle.textContent = t('erase.title', { size: formatBytes(facts.uncoveredBytes ?? 0) });
 }
 
 function renderChecks(container, checks) {
@@ -1220,7 +1261,7 @@ async function startWrite() {
   const result = evaluation();
   if (!result.canWrite) {
     const missing = result.items.filter((item) => item.status !== 'pass').map((item) => `${item.label}：${item.detail}`);
-    log.error('write', `还不能写入：${missing.join('；')}`);
+    log.error('write', t('write.blocked', { missing: missing.join(t('verify.listSeparator')) }));
     renderChecklist();
     return;
   }
@@ -1235,13 +1276,20 @@ async function startWrite() {
   ui.writeProgress.hidden = false;
   ui.writeBar.style.width = '0%';
   ui.writeProgressText.hidden = false;
-  ui.writeProgressText.textContent = '准备写入…';
+  ui.writeProgressText.textContent = t('write.preparing');
   updateButtons();
-  log.info('write', `开始刷写：${state.imageLabel || state.imageName} · 未覆盖空间 ${state.eraseMode} · ${state.verification.summary}`);
+  log.info(
+    'write',
+    t('write.started', {
+      image: state.imageLabel || state.imageName,
+      mode: state.eraseMode,
+      verification: state.verification.summary,
+    }),
+  );
   try {
     await request({ type: 'uf-run', ...payload, opts });
   } catch (err) {
-    log.error('write', `写入失败：${err.message}`);
+    log.error('write', t('write.failedLog', { error: err.message }));
     state.ufRunning = false;
     updateButtons();
   }
@@ -1249,7 +1297,7 @@ async function startWrite() {
 
 function cancelWrite() {
   if (!state.ufRunning) return;
-  log.warn('write', '取消请求已发送');
+  log.warn('write', t('write.cancelSent'));
   request({ type: 'uf-cancel' }, { timeoutMs: 15000 }).catch((err) => reportError(err.message));
 }
 
@@ -1281,11 +1329,11 @@ function renderWriteProgress(payload) {
   state.write.speed = speed;
   const remaining = speed > 0 && total > done ? (total - done) / speed : null;
   ui.writeBar.style.width = `${percent}%`;
-  const phase = PHASE_LABELS[payload.phase] ?? payload.phase ?? '写入';
+  const phase = phaseLabel(payload.phase);
   const pieces = [`${phase}${payload.item ? ` · ${payload.item}` : ''}`, `${percent.toFixed(1)}%`];
   if (speed > 0) pieces.push(formatSpeed(speed));
-  pieces.push(`已用 ${formatDuration(elapsed)}`);
-  if (remaining !== null) pieces.push(`剩余 ${formatDuration(remaining)}`);
+  pieces.push(t('write.elapsed', { time: formatDuration(elapsed) }));
+  if (remaining !== null) pieces.push(t('time.remaining', { time: formatDuration(remaining) }));
   ui.writeProgressText.textContent = pieces.join(' · ');
   document.querySelector('#write-progress')?.classList.toggle('complete', percent >= 100);
   renderCtaHint(evaluation());
@@ -1295,7 +1343,7 @@ function renderUfResult(result) {
   state.ufRunning = false;
   const run = result.run;
   if (!result.ok || !run) {
-    const message = result.error || '写入失败';
+    const message = result.error || t('write.failed');
     log.error('write', message);
     renderWriteFailure(run?.error ?? { codeName: result.kind ?? 'WRITE_FAILED', detail: message });
     updateButtons();
@@ -1304,9 +1352,12 @@ function renderUfResult(result) {
   }
   log.info(
     'write',
-    `结果 ${run.ok ? '完成' : '失败'} · 写入 ${formatBytes(run.bytesWritten)} · 擦除 ${formatBytes(
-      run.bytesErased,
-    )} · ${(run.durationMs / 1000).toFixed(1)}s`,
+    t('write.result', {
+      result: run.ok ? t('write.result.ok') : t('write.result.fail'),
+      written: formatBytes(run.bytesWritten),
+      erased: formatBytes(run.bytesErased),
+      duration: (run.durationMs / 1000).toFixed(1),
+    }),
   );
   for (const phase of run.phases ?? []) {
     log.debug('write', `${phase.phase} ${phase.name} — ${phase.status}${phase.note ? ` (${phase.note})` : ''}`);
@@ -1317,12 +1368,13 @@ function renderUfResult(result) {
     state.writeDone = true;
     ui.writeBar.style.width = '100%';
     document.querySelector('#write-progress')?.classList.add('complete');
-    ui.writeProgressText.textContent = `完成 · 写入 ${formatBytes(run.bytesWritten)} · 用时 ${formatDuration(
-      (run.durationMs ?? 0) / 1000,
-    )}`;
-    setBanner('刷写完成。设备会自动重启。', 'info');
+    ui.writeProgressText.textContent = t('write.complete', {
+      written: formatBytes(run.bytesWritten),
+      time: formatDuration((run.durationMs ?? 0) / 1000),
+    });
+    setBanner(t('write.doneBanner'), 'info');
   } else {
-    renderWriteFailure(run.error ?? { codeName: 'WRITE_FAILED', detail: '写入未完成' });
+    renderWriteFailure(run.error ?? { codeName: 'WRITE_FAILED', detail: t('write.notFinished') });
   }
   updateButtons();
   renderChecklist();
@@ -1339,13 +1391,12 @@ function renderRunFailure(error) {
 /** renderWriteFailure always ends with a next step the user can actually take. */
 function renderWriteFailure(error = {}) {
   ui.writeFailure.hidden = false;
-  ui.writeFailureTitle.textContent = `刷写失败：${error.codeName ?? '未知错误'}${error.code ? `（${error.code}）` : ''}`;
+  ui.writeFailureTitle.textContent = t('write.failureTitle', {
+    code: error.codeName ?? t('write.unknownError'),
+    number: error.code ? t('write.codeSuffix', { code: error.code }) : '',
+  });
   ui.writeFailureDetail.textContent = [error.detail, error.hint].filter(Boolean).join(' ');
-  const steps = [
-    '再点一次「开始刷写」，页面会自己重新进入刷写模式。',
-    '设备不见了就断电重进刷写模式，再点「连接设备」。',
-    '换一根数据线或换一个 USB 口；仍不行请导出日志。',
-  ];
+  const steps = [t('write.step.retry'), t('write.step.power'), t('write.step.cable')];
   ui.writeFailureSteps.replaceChildren(
     ...steps.map((text) => {
       const li = document.createElement('li');
@@ -1357,7 +1408,7 @@ function renderWriteFailure(error = {}) {
 
 function clearWriteFailure() {
   ui.writeFailure.hidden = true;
-  ui.writeFailureTitle.textContent = '刷写失败';
+  ui.writeFailureTitle.textContent = t('write.failed');
   ui.writeFailureDetail.textContent = '';
   ui.writeFailureSteps.replaceChildren();
 }
@@ -1392,7 +1443,11 @@ function updateButtons(precomputed) {
   ui.downloadCancel.disabled = !state.download.running;
   ui.writeButton.disabled = !result.canWrite;
   ui.writeButton.dataset.state = state.ufRunning ? 'running' : state.writeDone ? 'done' : '';
-  ui.writeTitle.textContent = state.ufRunning ? '刷写中…' : state.writeDone ? '刷写完成' : '开始刷写';
+  ui.writeTitle.textContent = state.ufRunning
+    ? t('write.title.running')
+    : state.writeDone
+      ? t('write.title.done')
+      : t('action.start');
   ui.cancelWrite.disabled = !state.ufRunning;
   ui.cancelWrite.hidden = !state.ufRunning;
   ui.eraseMode.disabled = state.ufRunning;
@@ -1408,31 +1463,31 @@ function updateButtons(precomputed) {
 function renderCtaHint(result) {
   if (state.ufRunning) {
     const percent = Math.round(state.write.lastPercent ?? 0);
-    ui.ctaHint.textContent = percent > 0 ? `${percent}% · 不要拔线` : '准备写入…';
+    ui.ctaHint.textContent = percent > 0 ? t('cta.running', { percent }) : t('cta.preparing');
     return;
   }
   if (!state.image) {
-    ui.ctaHint.textContent = '先选系统';
+    ui.ctaHint.textContent = t('cta.pickImage');
     return;
   }
   if (state.deviceRows.length === 0) {
-    ui.ctaHint.textContent = '先连接设备';
+    ui.ctaHint.textContent = t('cta.connect');
     return;
   }
   if (state.writeDone) {
-    ui.ctaHint.textContent = '设备会自动重启';
+    ui.ctaHint.textContent = t('cta.autoReboot');
     return;
   }
   if (state.eraseChoiceNeeded) {
-    ui.ctaHint.textContent = '确认未覆盖空间';
+    ui.ctaHint.textContent = t('cta.confirmErase');
     return;
   }
   if (result.canWrite) {
-    ui.ctaHint.textContent = '覆盖设备上的原有系统';
+    ui.ctaHint.textContent = t('cta.overwrite');
     return;
   }
   // Anything else that blocks is already spelled out in the list above.
-  ui.ctaHint.textContent = '还差一步';
+  ui.ctaHint.textContent = t('cta.almost');
 }
 
 function setBanner(text, tone = 'warn') {
@@ -1459,7 +1514,7 @@ function renderResult(result) {
     state.deviceState = result.state;
     if (result.state.mode === 'LOADER') state.dbDone = true;
     if (previousMode === 'MASKROM' && result.state.mode === 'LOADER') {
-      log.info('device', '设备已进入 LOADER');
+      log.info('device', t('device.enteredLoader'));
       clearReconnect('db-complete');
     }
     renderDevices();
@@ -1482,7 +1537,7 @@ function renderResult(result) {
 function renderInstall() {
   // One button, no sentence: the browser's own install prompt explains itself.
   ui.install.hidden = !(state.install.event && !state.install.installed);
-  ui.installNote.textContent = state.install.installed ? '已安装到桌面' : '';
+  ui.installNote.textContent = state.install.installed ? t('pwa.installed') : '';
 }
 
 async function promptInstall() {
@@ -1491,9 +1546,9 @@ async function promptInstall() {
   try {
     event.prompt();
     const choice = await event.userChoice;
-    log.info('pwa', `安装选择：${choice?.outcome ?? 'unknown'}`);
+    log.info('pwa', t('pwa.installChoice', { outcome: choice?.outcome ?? 'unknown' }));
   } catch (err) {
-    log.error('pwa', `安装失败：${err.message}`);
+    log.error('pwa', t('pwa.installFailed', { error: err.message }));
   } finally {
     state.install.event = null;
     renderInstall();
@@ -1502,7 +1557,7 @@ async function promptInstall() {
 
 async function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) {
-    ui.swNote.textContent = '离线缓存不可用：这个浏览器没有 service worker。';
+    ui.swNote.textContent = t('pwa.noServiceWorker');
     return;
   }
   try {
@@ -1515,31 +1570,35 @@ async function registerServiceWorker() {
         if (installing.state === 'installed' && navigator.serviceWorker.controller) {
           state.sw.updateReady = true;
           renderSwNote();
-          setBanner('有新版本，刷新页面后生效。', 'info');
+          setBanner(t('pwa.updateReady'), 'info');
         }
       });
     });
     navigator.serviceWorker.addEventListener('controllerchange', renderSwNote);
     renderSwNote();
   } catch (err) {
-    ui.swNote.textContent = `离线缓存注册失败：${err.message}`;
-    log.error('pwa', `service worker 注册失败：${err.message}`);
+    ui.swNote.textContent = t('pwa.registerFailed', { error: err.message });
+    log.error('pwa', t('pwa.swRegisterFailed', { error: err.message }));
   }
 }
 
 function renderSwNote() {
   const controlled = Boolean(navigator.serviceWorker?.controller);
-  ui.swNote.textContent = `离线缓存：${controlled ? '已接管' : '注册中'}${state.sw.updateReady ? ' · 有新版本' : ''}`;
+  ui.swNote.textContent = t('pwa.cache', {
+    state:
+      (controlled ? t('pwa.cacheControlled') : t('pwa.cacheRegistering')) +
+      (state.sw.updateReady ? t('pwa.newVersion') : ''),
+  });
   ui.reloadApp.hidden = !state.sw.updateReady;
 }
 
 function checkSupport() {
   if (!globalThis.navigator?.usb) {
-    setBanner('这个浏览器没有 WebUSB，请用桌面版 Chrome / Edge 打开。', 'error');
+    setBanner(t('support.noWebusb'), 'error');
     return false;
   }
   if (!globalThis.isSecureContext) {
-    setBanner('WebUSB 需要 https 或 localhost 才能使用。', 'error');
+    setBanner(t('support.insecure'), 'error');
     return false;
   }
   return true;
@@ -1605,7 +1664,7 @@ function wireEvents() {
     state.eraseMode = ui.eraseMode.value;
     state.eraseConfirmed = false;
     ui.eraseConfirm.checked = false;
-    log.info('write', `未覆盖空间：${state.eraseMode}`);
+    log.info('write', t('erase.mode', { mode: state.eraseMode }));
     renderChecklist();
     if (state.plan) planImage();
   });
@@ -1627,7 +1686,7 @@ function wireEvents() {
     if (state.ready) await runLine('ld');
   });
   usb?.addEventListener('disconnect', async () => {
-    log.warn('device', '设备已断开');
+    log.warn('device', t('device.disconnected'));
     state.dbDone = false;
     markReconnect(state.ufRunning ? 'error' : 'unplug');
     await refreshDeviceList();
@@ -1638,28 +1697,30 @@ function wireEvents() {
     event.preventDefault();
     state.install.event = event;
     renderInstall();
-    log.info('pwa', '可以安装到桌面');
+    log.info('pwa', t('pwa.canInstall'));
   });
   globalThis.addEventListener?.('appinstalled', () => {
     state.install.installed = true;
     state.install.event = null;
     renderInstall();
-    log.info('pwa', '已安装到桌面');
+    log.info('pwa', t('pwa.installedLog'));
   });
-  globalThis.addEventListener?.('online', () => log.info('net', '网络已恢复'));
-  globalThis.addEventListener?.('offline', () => log.warn('net', '网络已断开：页面与内核来自本地缓存，写入不受影响'));
+  globalThis.addEventListener?.('online', () => log.info('net', t('net.online')));
+  globalThis.addEventListener?.('offline', () => log.warn('net', t('net.offline')));
 }
 
 async function main() {
+  // Language first: every render below reads copy through t().
+  setLocale(resolveLocale({ query: globalThis.location?.search ?? '' }));
+  applyDocument();
   initLogPanel();
-  log.info('app', '页面启动');
+  log.info('app', t('app.started'));
   const caps = {
     save: typeof globalThis.showSaveFilePicker === 'function',
     streams: typeof globalThis.ReadableStream === 'function' && typeof globalThis.WritableStream === 'function',
   };
-  ui.fsaNote.textContent =
-    caps.save && caps.streams ? '' : '这个浏览器不能直接下载官方镜像，请在「选择系统」里选本地文件，或改用桌面版 Chrome / Edge。';
-  if (!caps.save) log.warn('download', '浏览器不支持流式写盘：官方镜像需要手动下载');
+  ui.fsaNote.textContent = caps.save && caps.streams ? '' : t('app.noStreamSave');
+  if (!caps.save) log.warn('download', t('pwa.noStreamLog'));
 
   checkSupport();
   initDropTarget();
