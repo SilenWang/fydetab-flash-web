@@ -59,14 +59,27 @@ test('the page declares the manifest and the install surface', () => {
   assert.match(html, /<link rel="icon"/);
   assert.match(html, /name="theme-color"/);
   assert.match(html, /id="file-image"[^>]*accept="[^"]*\.zip/, 'the image picker must accept .zip');
-  assert.match(html, /id="image-dialog"/, 'the system picker must be a dialog');
+  assert.match(html, /id="download-dialog"/, 'the download picker must be a dialog');
   assert.match(html, /id="device-dialog"/, 'the device picker must be a dialog');
   assert.match(html, /id="btn-write"/, 'the flash tile must own the write action');
   assert.match(html, /id="log-body"/, 'the log panel must live on the page, not behind a drawer');
 
-  for (const id of ['btn-install', 'btn-reload-app', 'install-note', 'sw-note', 'reconnect', 'reconnect-steps', 'btn-reconnect-auth', 'btn-export-log', 'btn-toggle-log', 'image-choices', 'btn-image', 'btn-device']) {
+  for (const id of ['btn-download', 'btn-image', 'btn-install', 'btn-reload-app', 'install-note', 'sw-note', 'reconnect', 'reconnect-steps', 'btn-reconnect-auth', 'btn-export-log', 'btn-toggle-log', 'image-choices', 'btn-device']) {
     assert.ok(html.includes(`id="${id}"`), `index.html is missing #${id}`);
   }
+});
+
+test('downloading and choosing an image are two separate moves', () => {
+  // ① only hands a URL to the browser; ② is the only way a file gets in. They
+  // must not be wired together: a user who already has the image never has to
+  // touch ①, and ① must not leave a "waiting" state that gates ②.
+  const app = read('app.js');
+  const html = read('index.html');
+  assert.ok(!/pendingDownload/.test(app), 'app.js still threads a pending download through chooseImage');
+  assert.ok(!/download-hint|btn-hint-pick/.test(html), 'index.html still carries the download hint bar');
+  assert.match(app, /ui\.imageButton\.addEventListener\('click', pickLocalImage\)/, '② must open the local picker directly');
+  assert.match(app, /ui\.downloadButton\.addEventListener\('click', openDownloadDialog\)/, '① must open the release picker');
+  assert.match(app, /triggerDownload\(entry\)/, '① must stay a plain navigation download');
 });
 
 test('the page offers no demo or mock surface', () => {

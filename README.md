@@ -14,7 +14,7 @@ WebAssembly, USB goes through WebUSB, and images never leave your machine.
 <table width="100%">
   <tr>
     <td width="33%" align="center"><img src="docs/images/web-ui/e1-empty.png" width="283" alt="Idle"><br><sub>Idle — pick a system, pick a device, flash</sub></td>
-    <td width="33%" align="center"><img src="docs/images/web-ui/e2-image-dialog.png" width="283" alt="Version picker"><br><sub>Version picker: brand first, then release</sub></td>
+    <td width="33%" align="center"><img src="docs/images/web-ui/e2-image-dialog.png" width="283" alt="Version picker"><br><sub>Download an image: brand first, then release</sub></td>
     <td width="33%" align="center"><img src="docs/images/web-ui/e7-writing.png" width="283" alt="Writing"><br><sub>Writing — the third tile turns brand red</sub></td>
   </tr>
   <tr>
@@ -28,15 +28,16 @@ WebAssembly, USB goes through WebUSB, and images never leave your machine.
 
 1. **Enter flash mode.** Power the tablet off, connect USB, hold **Vol+**, tap **Power**, then release Power
    and Vol+. In MASKROM the page sends Download Boot by itself — click no read button before that.
-2. **Pick a system.** Click the first tile, choose FydeOS or openFyde and a release — the browser starts its
-   own download and the page stays put with a standing *wait for the download, then choose the image* note.
-   When it finishes, pick the file back up from that note. An `.img` / official `.zip` you already have works
-   too, via *Choose local file*.
-3. **Connect the device.** Click the second tile and select the `0x2207` device in the browser prompt.
-4. **Verify.** Parsing, PARM CRC, RKAF CRC and whole-image MD5 run by themselves; one line shows the verdict.
-5. **Flash.** If the image leaves storage uncovered, say what to do with the tail, then click *Start flash*.
-   Progress, speed and ETA sit under the third tile; you can cancel at any point.
-6. **Watch the log.** Collapsed by default, opens on errors, exports NDJSON. Keep it when something fails.
+2. **Download an image (optional).** Click the first tile, choose FydeOS or openFyde and a release. The
+   browser starts its own download; the page keeps no progress and never asks you to come back. Skip this
+   tile entirely if you already have the file.
+3. **Choose a local image.** Click the second tile (or drop a file on the page) and pick the `.img` / official
+   `.zip`. This step is independent of the first one.
+4. **Connect the device.** Click the third tile and select the `0x2207` device in the browser prompt.
+5. **Verify.** Parsing, PARM CRC, RKAF CRC and whole-image MD5 run by themselves; one line shows the verdict.
+6. **Flash.** If the image leaves storage uncovered, say what to do with the tail, then click *Start flash*.
+   Progress, speed and ETA sit under the last tile; you can cancel at any point.
+7. **Watch the log.** Collapsed by default, opens on errors, exports NDJSON. Keep it when something fails.
 
 Needs Chrome / Edge / Chromium ≥ 89 and a USB-C cable that actually carries data. Linux wants a
 [udev rule](docs/99-rockchip-webusb.rules), Windows wants WinUSB, macOS wants nothing.

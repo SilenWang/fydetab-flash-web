@@ -20,7 +20,12 @@ export default {
   'worker.ignored': '忽略消息 {type}',
   'app.bootFailed': '页面无法启动：{message}',
   // 三块
-  'tile.image': '选择系统',
+  'tile.download': '下载镜像',
+  'tile.downloadSub': 'FydeOS / openFyde 官方版本',
+  'tile.downloadSubDone': '已交给浏览器：{label}',
+  'tile.downloadOptional': '可选',
+  'tile.image': '选择本地镜像',
+  'tile.imageSub': '已下载的 .img / .zip，也可以拖进来',
   'tile.device': '选择设备',
   'tile.deviceSub': 'USB 连接',
 
@@ -56,9 +61,7 @@ export default {
   'mode.unknown': '未知',
 
   // 镜像
-  'source.download': '官方下载',
   'source.local': '本地文件',
-  'source.unknown': '未知',
   'image.catalogFailed': '版本列表读取失败。可以先选本地文件。',
   'image.catalogLog': '版本列表：{count} 个版本',
   'image.catalogUpdated': '（更新于 {date}）',
@@ -77,16 +80,13 @@ export default {
   'image.verdict.preparing': '准备中…',
   'image.verdict.full': '已校验',
   'image.verdict.quick': '快速校验通过',
+  'image.pickerUnavailable': '文件选择器不可用（{error}），改用普通文件输入框',
+  'image.pickerDescription': 'Rockchip 镜像',
 
   // 下载
-  'download.hintBody': '请等待浏览器下载完成，手动选择镜像。',
-  'download.hintPick': '选择镜像',
   'download.noUrl': '这个版本没有下载地址：请到发布页手动下载，再选择本地文件。',
   'download.noUrlLog': '{label}：清单里没有下载地址',
   'download.handedOff': '交给浏览器下载：{label} ← {url}',
-  'download.pickerUnavailable': '文件选择器不可用（{error}），改用普通文件输入框',
-  'download.pickerDescription': 'Rockchip 镜像',
-
   // 写入计划
   'plan.coreNotReady': '内核还没加载完：稍后再排写入内容',
   'plan.readFailed': '读取镜像失败：{error}',
@@ -168,10 +168,9 @@ export default {
   'action.export': '导出',
   'action.install': '安装到桌面',
   'action.reload': '刷新页面',
-  'action.pickLocal': '选择本地文件',
   'cta.running': '{percent}% · 不要拔线',
   'cta.preparing': '准备写入…',
-  'cta.pickImage': '先选系统',
+  'cta.pickImage': '先选本地镜像',
   'cta.connect': '先连接设备',
   'cta.autoReboot': '设备会自动重启',
   'cta.confirmErase': '确认未覆盖空间',
@@ -188,10 +187,10 @@ export default {
   'erase.mode': '未覆盖空间：{mode}',
 
   // 弹窗与页脚
-  'dialog.imageTitle': '选择系统',
+  'dialog.downloadTitle': '下载镜像（可选）',
+  'dialog.downloadNote': '点一个版本就把文件交给浏览器下载；下完后用「选择本地镜像」选回来。',
   'dialog.deviceTitle': '选择设备',
   'dialog.readingVersions': '正在读取版本…',
-  'dialog.dropHint': '也可以把镜像文件直接拖到页面上',
   'dialog.connectTitle': '连接设备',
   'dialog.connectSub': '用 USB 线把 Fydetab Duo 接到电脑',
   'dialog.wipeNote': '刷写会清除设备上的原有系统',

@@ -27,7 +27,12 @@ export default {
   'worker.ignored': 'Ignoring message {type}',
   'app.bootFailed': 'The page could not start: {message}',
   // -------------------------------------------------------------- tiles
-  'tile.image': 'Choose an image',
+  'tile.download': 'Download an image',
+  'tile.downloadSub': 'Official FydeOS / openFyde releases',
+  'tile.downloadSubDone': 'Handed to the browser: {label}',
+  'tile.downloadOptional': 'Optional',
+  'tile.image': 'Choose a local image',
+  'tile.imageSub': 'A downloaded .img / .zip, or drop one here',
   'tile.device': 'Choose a device',
   'tile.deviceSub': 'USB connection',
 
@@ -66,9 +71,7 @@ export default {
   'mode.unknown': 'Unknown',
 
   // -------------------------------------------------------------- image
-  'source.download': 'official download',
   'source.local': 'local file',
-  'source.unknown': 'unknown',
   'image.catalogFailed': 'Could not read the version list. You can pick a local file instead.',
   'image.catalogLog': 'Version list: {count} versions',
   'image.catalogLog_one': 'Version list: {count} version',
@@ -89,16 +92,13 @@ export default {
   'image.verdict.preparing': 'Preparing…',
   'image.verdict.full': 'Verified',
   'image.verdict.quick': 'Quick check passed',
+  'image.pickerUnavailable': 'The file picker is unavailable ({error}); falling back to a plain file input',
+  'image.pickerDescription': 'Rockchip image',
 
   // ----------------------------------------------------------- download
-  'download.hintBody': 'Wait for the browser to finish downloading, then choose the image manually.',
-  'download.hintPick': 'Choose the image',
   'download.noUrl': 'This version has no download link: get it from the release page, then choose the local file.',
   'download.noUrlLog': '{label}: the catalogue has no download link',
   'download.handedOff': 'Handed to the browser: {label} ← {url}',
-  'download.pickerUnavailable': 'The file picker is unavailable ({error}); falling back to a plain file input',
-  'download.pickerDescription': 'Rockchip image',
-
   // --------------------------------------------------------------- plan
   'plan.coreNotReady': 'The core is still loading: the write plan comes later',
   'plan.readFailed': 'Could not read the image: {error}',
@@ -182,10 +182,9 @@ export default {
   'action.export': 'Export',
   'action.install': 'Install',
   'action.reload': 'Reload',
-  'action.pickLocal': 'Choose a local file',
   'cta.running': '{percent}% · do not unplug',
   'cta.preparing': 'Preparing the write…',
-  'cta.pickImage': 'Choose an image first',
+  'cta.pickImage': 'Choose a local image first',
   'cta.connect': 'Connect a device first',
   'cta.autoReboot': 'The device reboots on its own',
   'cta.confirmErase': 'Confirm the uncovered space',
@@ -202,10 +201,10 @@ export default {
   'erase.mode': 'Uncovered space: {mode}',
 
   // ---------------------------------------------------------- dialog / foot
-  'dialog.imageTitle': 'Choose an image',
+  'dialog.downloadTitle': 'Download an image (optional)',
+  'dialog.downloadNote': 'Clicking a release hands the file to the browser. When it finishes, pick it back up with “Choose a local image”.',
   'dialog.deviceTitle': 'Choose a device',
   'dialog.readingVersions': 'Reading versions…',
-  'dialog.dropHint': 'You can also drag an image file onto the page',
   'dialog.connectTitle': 'Connect a device',
   'dialog.connectSub': 'Plug the Fydetab Duo into this computer with a USB cable',
   'dialog.wipeNote': 'Flashing erases the system already on the device',

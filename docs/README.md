@@ -26,7 +26,7 @@
 |---|---|
 | [protocol-notes.md](protocol-notes.md) | rockusb 传输、CBW/CSW、只读命令、Download Boot、loader 错配实测 |
 | [rkfw-rkaf-format.md](rkfw-rkaf-format.md) | RKFW / RKAF / parameter 格式、CRC、GPT 计划、核对方法 |
-| [m4b-ui.md](m4b-ui.md) | 页面设计：选系统 / 设备 / 日志三块、版本清单、下载与校验策略 |
+| [m4b-ui.md](m4b-ui.md) | 页面设计：下载 / 选本地镜像 / 设备 / 刷写四块、版本清单、下载与校验策略 |
 | [99-rockchip-webusb.rules](99-rockchip-webusb.rules) | Linux udev 规则（可直接安装） |
 
 界面截图在 `docs/images/web-ui/`，6 张（空状态、版本对话框、写入中、完成、暗色、390px 窄屏），
