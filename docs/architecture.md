@@ -5,13 +5,13 @@
 
 当前阶段：M1（Go/WASM 核心 + WebUSB bridge + `ld`/`cd`/`sd` + Download Boot + 只读信息）、
 M2（离线 `uf --dry-run` 计划）、M3a（写入层 + `uf` 状态机，mock/回放验证）、M3b（WebUSB 写入绑定 +
-真机前自检）、M4（可安装 PWA + 离线 + 官方 `.zip` 直读），以及 M4b（单列单页：选系统 / 设备 / 日志，
+真机前自检）、M4（可安装 PWA + 离线 + 官方 `.zip` 直读），以及 M4b（单列单页：下载 / 选镜像 / 设备 / 日志，
 给普通用户用）。
 
 M3b 之后浏览器里已经有一条完整的写入路径：从 `update.img` 的 RKFW 头里切出**镜像自带的 loader** 做
 Download Boot，再用 `internal/uf` 的同一套状态机执行 `gpt → wl → rd`；写入前必须通过页面的逐项自检。
 M4 把这一页变成可以装到桌面、断网也能打开的应用，并且允许直接选择官方 `.zip`（ZIP64 + 流式 deflate，
-不落地 3.8 GiB）。M4b 把调试面板收成一条普通用户能看懂的主流程：**选系统 → 选设备 → 刷写 → 看日志**，
+不落地 3.8 GiB）。M4b 把调试面板收成一条普通用户能看懂的主流程：**下载镜像（可选）→ 选本地镜像 → 选设备 → 刷写 → 看日志**，
 页面上不再有协议名、trace 或演示入口。真机端到端由后续 stage 负责。
 
 ## 页面与运行时
@@ -45,7 +45,7 @@ main thread (app.js)                        worker (worker.js)
 | M3a | 写入层 + `uf` 状态机，在 mock 设备与录制 trace 上验证 | [cli.md](cli.md)、[uf-write-path.md](uf-write-path.md) |
 | M3b | WebUSB 写入绑定 + 打开设备前的 loader 自检与页面门禁 | [uf-write-path.md §9](uf-write-path.md#9-webusb-绑定与-loader-自检m3b) |
 | M4 | 可安装 PWA、离线缓存、官方 `.zip` 直读 | [pwa-offline.md](pwa-offline.md) |
-| M4b | 单列单页（选系统 / 设备 / 日志），只留面向用户的主流程 | [m4b-ui.md](m4b-ui.md) |
+| M4b | 单列单页（下载 / 选镜像 / 设备 / 日志），只留面向用户的主流程 | [m4b-ui.md](m4b-ui.md) |
 
 阶段边界：M4 只改页面与工具链，`internal/` 的写入语义与 `web/app/preflight.js` 的门禁条件未动；M4b 只改
 页面、下载/校验的前端编排与一处**新增的** wasm 导出（`ufVerify`），`ufPlan` / `ufRun` / `ufCancel` 与写入
@@ -68,7 +68,7 @@ main thread (app.js)                        worker (worker.js)
 - `cmd/wasm/`：`syscall/js` 导出（`bindBridge` / `exec` / `inspectLoader` / `ufPlan` / `ufRun` /
   `ufCancel` / `ufVerify` / `imageLoader` / `demoImage` / `close`）与 JS bridge 传输。`ufVerify` 是 M4b
   新增的：结构报告 + PARM CRC + 可选 RKAF CRC / 整镜像 MD5，并在读取器上挂进度回调。
-- `web/app/`：页面（选系统 / 设备 / 日志三块）。主线程 WebUSB host、module worker、`preflight.js` 门禁、
+- `web/app/`：页面（下载 / 选镜像 / 设备 / 日志）。主线程 WebUSB host、module worker、`preflight.js` 门禁、
   `images.js` 镜像清单与导航式下载、`brand.js` 官方品牌字形、`verify.js` 校验结论、`devices.js` 设备列表、
   `logs.js` 日志仓库。
 - `web/probe/`：M0 只读探针，保留下来用于抓 trace 与对照，不受后续阶段影响。
@@ -85,7 +85,7 @@ internal/uf/                写入状态机、IDB 模型、mock/回放传输、B
 cmd/uf/                     uf --dry-run 计划 + --mock/--replay 写入状态机
 cmd/wasm/                   Go/WASM 核心导出（shell + ufPlan/ufRun/ufCancel/ufVerify/imageLoader/demoImage）
 cmd/genprotocol/            生成 web/app/protocol.js 与 web/probe/protocol.js
-web/app/                    页面：三块（选系统 / 选设备 / 开始刷写）+ 日志（Etcher 式单列）
+web/app/                    页面：四块（下载镜像 / 选本地镜像 / 选设备 / 开始刷写）+ 日志（Etcher 式单列）
 web/app/images.js           镜像清单解析、导航式下载（<a download>，页面不读字节）
 web/app/brand.js            FydeOS / openFyde 官方品牌字形（内联 SVG，跟随主题色）
 web/app/images.json         官方镜像清单（品牌/版本/大小/sha256/URL/发布页）

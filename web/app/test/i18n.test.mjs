@@ -80,10 +80,10 @@ test('?lang= overrides detection without changing the rules', () => {
 test('setLocale refuses anything unsupported and reports the active one', () => {
   assert.equal(setLocale('zh'), 'zh');
   assert.equal(langTag(), 'zh-CN');
-  assert.equal(t('tile.image'), '选择系统');
+  assert.equal(t('tile.image'), '选择本地镜像');
   assert.equal(setLocale('en'), 'en');
   assert.equal(langTag(), 'en');
-  assert.equal(t('tile.image'), 'Choose an image');
+  assert.equal(t('tile.image'), 'Choose a local image');
   assert.equal(setLocale('fr'), FALLBACK);
   assert.equal(langTag(), 'en');
   assert.deepEqual(SUPPORTED, ['zh', 'en']);
@@ -173,7 +173,7 @@ test('index.html carries no copy of its own either', () => {
   // The static strings a person sees are marked for applyDocument().
   assert.match(html, /<html lang="en">/);
   assert.match(html, /data-i18n="app\.title"|data-i18n="tile\.image"/);
-  for (const key of ['app.heading', 'tile.image', 'tile.device', 'log.title', 'dialog.imageTitle']) {
+  for (const key of ['app.heading', 'tile.image', 'tile.download', 'tile.device', 'log.title', 'dialog.downloadTitle']) {
     assert.ok(html.includes(`data-i18n="${key}"`), `index.html is missing data-i18n="${key}"`);
   }
 });
@@ -194,7 +194,7 @@ test('t() interpolates, falls back and never returns undefined', () => {
 
   setLocale('zh');
   assert.equal(t('device.count', { count: 3 }), '3 台设备');
-  assert.equal(t('tile.image'), '选择系统');
+  assert.equal(t('tile.image'), '选择本地镜像');
   assert.equal(localeKeys('zh').length > 100, true);
 });
 
@@ -225,12 +225,12 @@ test('applyDocument translates text, aria-labels and the document language', () 
   applyDocument(fakeDocument);
   assert.equal(documentElement.attrs.lang, 'zh-CN');
   assert.equal(fakeDocument.title, 'Fydetab Duo 刷写工具');
-  assert.equal(nodes[0].textContent, '选择系统');
+  assert.equal(nodes[0].textContent, '选择本地镜像');
   assert.equal(nodes[1].attrs['aria-label'], '展开日志');
   assert.equal(nodes[2].attrs.title, '设备已断开');
 
   setLocale('en');
   applyDocument(fakeDocument);
   assert.equal(documentElement.attrs.lang, 'en');
-  assert.equal(nodes[0].textContent, 'Choose an image');
+  assert.equal(nodes[0].textContent, 'Choose a local image');
 });

@@ -245,8 +245,28 @@ body.dragging #btn-image {
   .tile-chip { max-width: 36%; }
 }
 
+/* ① is a side errand, so its tile says so instead of looking like a step the
+   user forgot. A quiet outline pill, never the brand red. */
+.tile-tag {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--outline-strong);
+  background: var(--surface);
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+/* On a narrow phone the pill only tightens up: it is the one cue that ① can be
+   skipped, so dropping it at a breakpoint would hide exactly the wrong word. */
+@media (max-width: 420px) {
+  .tile-tag { padding: 1px 6px; font-size: 10.5px; }
+}
+
 /* The flash tile is the only place the brand red appears. */
-#btn-image::after,
+#btn-download::after,
 #btn-device::after {
   content: "";
   width: 7px;
@@ -328,26 +348,6 @@ body.dragging #btn-image {
 .btn.ghost.small:hover:not(:disabled) { border-color: var(--outline-strong); }
 
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-
-/* ------------------------------------------------------------------- hint */
-
-/* A standing note, not a toast: it stays until the user picks the file the
-   browser downloaded. It never covers the tiles — ① stays usable above. */
-.hint {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 12px;
-  border: 1px solid color-mix(in srgb, var(--info) 32%, var(--outline));
-  border-radius: var(--r-md);
-  background: color-mix(in srgb, var(--info) 6%, var(--surface));
-}
-
-.hint-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.hint-title { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
-.hint-body { font-size: 12px; color: var(--text-2); }
-
-.hint .btn { flex: none; }
 
 /* ----------------------------------------------------------------- banner */
 

@@ -28,9 +28,11 @@
 
         <div id="banner" class="banner" role="status" hidden></div>
 
-        <!-- the three moves, the way Etcher lays them out -------------------- -->
+        <!-- the four moves, the way Etcher lays them out --------------------- -->
+        <!-- ① download is a side errand: it only hands a URL to the browser's
+             own downloader, so it never has to be done before ②. -->
         <div class="tiles">
-          <button id="btn-image" class="tile" type="button" aria-haspopup="dialog">
+          <button id="btn-download" class="tile" type="button" aria-haspopup="dialog">
             <span class="tile-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 3.5v10" />
@@ -38,9 +40,23 @@
                 <path d="M4.5 16v3A2.5 2.5 0 0 0 7 21.5h10a2.5 2.5 0 0 0 2.5-2.5v-3" />
               </svg>
             </span>
+            <span id="tile-download-body" class="tile-body">
+              <span id="tile-download-title" class="tile-title" data-i18n="tile.download">Download an image</span>
+              <span id="tile-download-sub" class="tile-sub" data-i18n="tile.downloadSub">Official FydeOS / openFyde releases</span>
+            </span>
+            <span id="tile-download-tag" class="tile-tag" data-i18n="tile.downloadOptional">Optional</span>
+          </button>
+
+          <button id="btn-image" class="tile" type="button">
+            <span class="tile-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 3.5h7l5 5v12a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 20.5v-17Z" />
+                <path d="M13 3.5v5h5" />
+              </svg>
+            </span>
             <span id="tile-image-body" class="tile-body">
-              <span id="tile-image-title" class="tile-title" data-i18n="tile.image">Choose an image</span>
-              <span id="tile-image-sub" class="tile-sub">FydeOS · openFyde</span>
+              <span id="tile-image-title" class="tile-title" data-i18n="tile.image">Choose a local image</span>
+              <span id="tile-image-sub" class="tile-sub" data-i18n="tile.imageSub">A downloaded .img / .zip</span>
             </span>
           </button>
 
@@ -69,15 +85,6 @@
             </span>
             <span id="write-image-chip" class="tile-chip" hidden></span>
           </button>
-        </div>
-
-        <!-- waiting on the browser's own download ---------------------------- -->
-        <div id="download-hint" class="hint" hidden>
-          <p id="download-hint-text" class="hint-text" role="status">
-            <span id="download-hint-title" class="hint-title"></span>
-            <span class="hint-body" data-i18n="download.hintBody">Wait for the browser to finish downloading, then choose the image manually.</span>
-          </p>
-          <button id="btn-hint-pick" class="btn secondary small" type="button" data-i18n="download.hintPick">Choose the image</button>
         </div>
 
         <div id="verify-progress" class="progress" hidden>
@@ -159,11 +166,11 @@
       </footer>
     </main>
 
-    <!-- 1 · image --------------------------------------------------------- -->
-    <dialog id="image-dialog" class="dialog">
+    <!-- 1 · download (optional) ------------------------------------------- -->
+    <dialog id="download-dialog" class="dialog">
       <div class="dialog-head">
-        <h2 data-i18n="dialog.imageTitle">Choose an image</h2>
-        <button id="btn-close-image" class="btn ghost small" type="button" data-i18n="action.close">Close</button>
+        <h2 data-i18n="dialog.downloadTitle">Download an image (optional)</h2>
+        <button id="btn-close-download" class="btn ghost small" type="button" data-i18n="action.close">Close</button>
       </div>
       <div class="dialog-body">
         <div id="image-choices" class="choices">
@@ -172,12 +179,11 @@
         <ul id="version-list" class="versions"></ul>
       </div>
       <div class="dialog-foot">
-        <button id="btn-pick-image" class="btn secondary small" type="button" data-i18n="action.pickLocal">Choose a local file</button>
-        <span class="note" data-i18n="dialog.dropHint">You can also drag an image file onto the page</span>
+        <span class="note" data-i18n="dialog.downloadNote">Clicking a release hands the file to the browser. When it finishes, choose it back with “Choose a local image”.</span>
       </div>
     </dialog>
 
-    <!-- 2 · device -------------------------------------------------------- -->
+    <!-- 3 · device -------------------------------------------------------- -->
     <dialog id="device-dialog" class="dialog">
       <div class="dialog-head">
         <h2 data-i18n="dialog.deviceTitle">Choose a device</h2>
